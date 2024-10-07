@@ -162,6 +162,18 @@ cython_debug/
 .idea/
 
 # User defined
+
 ## Credentials
 **config.ini
 *client_secret.json
+settings.json
+*credentials.json
+credentials.py
+*token.json
+*token.txt
+*.DS_Store
+.python-version
+
+## Ignore .csv and .json files
+**/*.csv
+**/*.json

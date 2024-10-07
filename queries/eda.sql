@@ -1,7 +1,15 @@
+
+SELECT *
+FROM delta.courier_routing_courier_ml_features_odp.order_level_features AS olf
+LIMIT 100
+;
+
+
+
 SELECT
     olf.order_id                                     AS order_id,
     olf.courier_id                                   AS courier_id,
-    c2.country_code                                  AS country_code,
+    olf.country_code                                 AS country_code,
     olf.city_code                                    AS city_code,
     olf.order_activated_local_datetime               AS activation_time,
     olf.courier_transport                            AS transport,
@@ -15,13 +23,11 @@ SELECT
     olf.order_time_zone                              AS time_zone,
     olf.p_creation_date
 FROM delta.courier_routing_courier_ml_features_odp.order_level_features AS olf
-    LEFT JOIN delta.central_geography_odp.cities_v2 AS c2
-        ON olf.city_code = c2.city_code
 WHERE order_final_status = 'DeliveredStatus'
     AND order_number_of_assignments = 1
     AND order_bundle_index IS NULL
     AND p_creation_date >= DATE '2024-01-01'
-    AND c2.country_code IN ('ES')
+    AND country_code IN ('ES')
 /*
     AND {activation_time_constraint(
          start_time=f"DATE('{start_time}')",
