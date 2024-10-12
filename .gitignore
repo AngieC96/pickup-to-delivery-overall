@@ -177,3 +177,5 @@ credentials.py
 ## Ignore .csv and .json files
 **/*.csv
 **/*.json
+
+images/

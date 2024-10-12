@@ -11,6 +11,7 @@ SELECT
     olf.courier_id                                   AS courier_id,
     olf.country_code                                 AS country_code,
     olf.city_code                                    AS city_code,
+    olf.order_created_local_datetime                 AS creation_time,
     olf.order_activated_local_datetime               AS activation_time,
     olf.courier_transport                            AS transport,
     olf.order_picked_up_local_datetime               AS pickup_time,
