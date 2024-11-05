@@ -24,6 +24,18 @@ class Estimator(ABC):
         '''
         pass
 
+    @abstractmethod
+    def evaluate(self, X_test, y_test):
+        '''
+        Method to evaluate the model.
+        It will compute the loss, a numerical metric that describes how wrong a model's predictions are.
+        Loss measures the distance between the model's predictions and the actual labels.
+        :param X_test: pd.DataFrame with the features.
+        :param y_test: pd.Series with the target variable.
+        :return: loss: float with the loss of the model.
+        '''
+        pass
+
 
 class BaselineModel_sum(Estimator):
     '''
@@ -78,6 +90,19 @@ class BaselineModel_sum(Estimator):
         y_hat = pd.Series(y_hat, name='pickup_to_delivery_predicted')
         return y_hat
 
+    def evaluate(self, X_test, y_test):
+        '''
+        Method to evaluate the model. It will compute the mean absolute error (MAE) and the mean squared error (MSE).
+        :param X_test: pd.DataFrame with the features.
+        :param y_test: pd.Series with the target variable.
+        :return: mae: float with the mean absolute error.
+        :return: mse: float with the mean squared error.
+        '''
+        y_hat = self.predict(X_test)
+        mae = np.mean(np.abs(y_test - y_hat))
+        mse = np.mean((y_test - y_hat)**2)
+        return mae, mse
+
 
 
 class BaselineModel_mean(Estimator):
@@ -122,3 +147,16 @@ class BaselineModel_mean(Estimator):
                 y_hat.append(row['pd_distance_haversine_m'] / self.theta[row['transport']])
         y_hat = pd.Series(y_hat, name='pickup_to_delivery_predicted')
         return y_hat
+
+    def evaluate(self, X_test, y_test):
+        '''
+        Method to evaluate the model. It will compute the mean absolute error (MAE) and the mean squared error (MSE).
+        :param X_test: pd.DataFrame with the features.
+        :param y_test: pd.Series with the target variable.
+        :return: mae: float with the mean absolute error.
+        :return: mse: float with the mean squared error.
+        '''
+        y_hat = self.predict(X_test)
+        mae = np.mean(np.abs(y_test - y_hat))
+        mse = np.mean((y_test - y_hat)**2)
+        return mae, mse
