@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from abc import ABC, abstractmethod
+from sklearn.linear_model import LinearRegression
 
 # Estimator will be an abstract class, and then we will define our different estimators like the baseline model or the linear model as subclasses of Estimator.
 class Estimator(ABC):
@@ -12,7 +13,7 @@ class Estimator(ABC):
     def fit(self, X_train, y_train):
         '''
         Method to fit the model to the data.
-        :return: None
+        :return self: the fitted model.
         '''
         pass
 
@@ -46,8 +47,6 @@ class BaselineModel_sum(Estimator):
     def __init__(self):
         self.X_train = None
         self.y_train = None
-        self.X_test = None
-        self.y_test = None
         self.theta = None
 
     def dataset_shape(self):
@@ -63,7 +62,7 @@ class BaselineModel_sum(Estimator):
         '''
         Method to fit the model to the data. For the BaselineModel, it will compute the parameters theta, a pd.Series with the average time spent in the vehicle for each transport type.
         :param X_train: pd.DataFrame with the features.
-        :return: None
+        :return self: the fitted model.
         '''
         self.X_train = X_train
         self.y_train = y_train
@@ -73,7 +72,7 @@ class BaselineModel_sum(Estimator):
 
         velocity = pd.Series(velocity, name='velocity (m/s)')
         self.theta = velocity
-        return
+        return self
 
     def predict(self, X):
         '''
@@ -90,7 +89,7 @@ class BaselineModel_sum(Estimator):
         y_hat = pd.Series(y_hat, name='pickup_to_delivery_predicted')
         return y_hat
 
-    def evaluate(self, X_test, y_test):
+    def evaluate(self, X_test: pd.DataFrame, y_test: pd.Series):
         '''
         Method to evaluate the model. It will compute the mean absolute error (MAE) and the mean squared error (MSE).
         :param X_test: pd.DataFrame with the features.
@@ -113,15 +112,23 @@ class BaselineModel_mean(Estimator):
     def __init__(self):
         self.X_train = None
         self.y_train = None
-        self.X_test = None
-        self.y_test = None
         self.theta = None
 
     def dataset_shape(self):
+        '''
+        Method to print the shape of the train and test datasets.
+        :return: shape of the train and test datasets.
+        '''
         print("Train dataset", self.X_train.shape, self.y_train.shape)
         print("Test dataset", self.X_test.shape, self.y_test.shape)
 
-    def fit(self, X_train, y_train):
+    def fit(self, X_train: pd.DataFrame, y_train: pd.Series):
+        '''
+        Method to fit the model to the data. For the BaselineModel, it will compute the parameters theta, a pd.Series with the average time spent in the vehicle for each transport type.
+        :param X_train: pd.DataFrame with the features.
+        :param y_train: pd.Series with the target variable.
+        :return self: the fitted model.
+        '''
         self.X_train = X_train
         self.y_train = y_train
         X_train['time'] = (X_train['delivery_entering_timestamp'] - X_train['pickup_timestamp']).dt.total_seconds()
@@ -131,9 +138,9 @@ class BaselineModel_mean(Estimator):
         # Differentiate the velocity per vehicle type
         velocity = X_new.groupby(X_new['transport'])['velocity'].mean()
         self.theta = velocity
-        return
+        return self
 
-    def predict(self, X):
+    def predict(self, X: pd.DataFrame):
         '''
         Method to predict the target variable. The function will give you the actual predictions for all samples inputted.
         :param X: pd.DataFrame with the features.
@@ -148,6 +155,59 @@ class BaselineModel_mean(Estimator):
         y_hat = pd.Series(y_hat, name='pickup_to_delivery_predicted')
         return y_hat
 
+    def evaluate(self, X_test: pd.DataFrame, y_test: pd.Series):
+        '''
+        Method to evaluate the model. It will compute the mean absolute error (MAE) and the mean squared error (MSE).
+        :param X_test: pd.DataFrame with the features.
+        :param y_test: pd.Series with the target variable.
+        :return: mae: float with the mean absolute error.
+        :return: mse: float with the mean squared error.
+        '''
+        y_hat = self.predict(X_test)
+        mae = np.mean(np.abs(y_test - y_hat))
+        mse = np.mean((y_test - y_hat)**2)
+        return mae, mse
+
+
+class LinearModel(Estimator):
+    '''
+    Linear model that predicts the time from pickup to delivery.
+    It computes the linear regression model using the features as input.
+    '''
+    def __init__(self):
+        self.X_train = None
+        self.y_train = None
+        self.theta = None
+
+    def dataset_shape(self):
+        '''
+        Method to print the shape of the train and test datasets.
+        :return: shape of the train and test datasets.
+        '''
+        print("Train dataset", self.X_train.shape, self.y_train.shape)
+        print("Test dataset", self.X_test.shape, self.y_test.shape)
+
+    def fit(self, X_train: pd.DataFrame, y_train: pd.Series):
+        '''
+        Method to fit the model to the data. It will compute the linear regression model.
+        :param X_train: pd.DataFrame with the features.
+        :param y_train: pd.Series with the target variable.
+        :return self: the fitted model.
+        '''
+        self.X_train = X_train
+        self.y_train = y_train
+        reg = LinearRegression().fit(X_train, y_train)
+        self.theta = reg
+        return self
+
+    def predict(self, X):
+        '''
+        Method to predict the target variable. The function will give you the actual predictions for all samples inputted.
+        :param X: pd.DataFrame with the features.
+        :return: y_hat: pd.Series with the predicted values.
+        '''
+        return self.theta.predict(X)
+
     def evaluate(self, X_test, y_test):
         '''
         Method to evaluate the model. It will compute the mean absolute error (MAE) and the mean squared error (MSE).
@@ -160,3 +220,4 @@ class BaselineModel_mean(Estimator):
         mae = np.mean(np.abs(y_test - y_hat))
         mse = np.mean((y_test - y_hat)**2)
         return mae, mse
+
