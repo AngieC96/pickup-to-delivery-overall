@@ -10,7 +10,7 @@ class Estimator(ABC):
     '''
 
     @abstractmethod
-    def fit(self, X_train, y_train):
+    def fit(self, X_train: pd.DataFrame, y_train: pd.Series):
         '''
         Method to fit the model to the data.
         :return self: the fitted model.
@@ -18,7 +18,7 @@ class Estimator(ABC):
         pass
 
     @abstractmethod
-    def predict(self, X):
+    def predict(self, X: pd.DataFrame):
         '''
         Method to predict the target variable. The function will give you the actual predictions for all samples inputted.
         :return: y_hat: pd.Series with the predicted values.
@@ -26,7 +26,7 @@ class Estimator(ABC):
         pass
 
     @abstractmethod
-    def evaluate(self, X_test, y_test):
+    def evaluate(self, X_test: pd.DataFrame, y_test: pd.Series):
         '''
         Method to evaluate the model.
         It will compute the loss, a numerical metric that describes how wrong a model's predictions are.
@@ -58,7 +58,7 @@ class BaselineModel_sum(Estimator):
         print("Test dataset", self.X_test.shape, self.y_test.shape)
         return self.X_train.shape, self.y_train.shape, self.X_test.shape, self.y_test.shape
 
-    def fit(self, X_train, y_train):
+    def fit(self, X_train: pd.DataFrame, y_train: pd.Series):
         '''
         Method to fit the model to the data. For the BaselineModel, it will compute the parameters theta, a pd.Series with the average time spent in the vehicle for each transport type.
         :param X_train: pd.DataFrame with the features.
@@ -74,7 +74,7 @@ class BaselineModel_sum(Estimator):
         self.theta = velocity
         return self
 
-    def predict(self, X):
+    def predict(self, X: pd.DataFrame):
         '''
         Method to predict the target variable. The function will give you the actual predictions for all samples inputted.
         :param X: pd.DataFrame with the features.
@@ -86,7 +86,7 @@ class BaselineModel_sum(Estimator):
         if isinstance(X, pd.DataFrame):
             for index, row in X.iterrows():
                 y_hat.append(row['pd_distance_haversine_m'] / self.theta[row['transport']])
-        y_hat = pd.Series(y_hat, name='pickup_to_delivery_predicted')
+        y_hat = pd.Series(y_hat, dtype=np.float64, name='pickup_to_delivery_predicted')
         return y_hat
 
     def evaluate(self, X_test: pd.DataFrame, y_test: pd.Series):
@@ -98,6 +98,8 @@ class BaselineModel_sum(Estimator):
         :return: mse: float with the mean squared error.
         '''
         y_hat = self.predict(X_test)
+        print("y_hat", type(y_hat), y_hat.dtype)
+        print("y_test", type(y_test), y_test.dtype)
         mae = np.mean(np.abs(y_test - y_hat))
         mse = np.mean((y_test - y_hat)**2)
         return mae, mse
@@ -152,7 +154,7 @@ class BaselineModel_mean(Estimator):
         if isinstance(X, pd.DataFrame):
             for index, row in X.iterrows():
                 y_hat.append(row['pd_distance_haversine_m'] / self.theta[row['transport']])
-        y_hat = pd.Series(y_hat, name='pickup_to_delivery_predicted')
+        y_hat = pd.Series(y_hat, dtype=np.float64, name='pickup_to_delivery_predicted')
         return y_hat
 
     def evaluate(self, X_test: pd.DataFrame, y_test: pd.Series):
@@ -200,7 +202,7 @@ class LinearModel(Estimator):
         self.theta = reg
         return self
 
-    def predict(self, X):
+    def predict(self, X: pd.DataFrame):
         '''
         Method to predict the target variable. The function will give you the actual predictions for all samples inputted.
         :param X: pd.DataFrame with the features.
@@ -208,7 +210,7 @@ class LinearModel(Estimator):
         '''
         return self.theta.predict(X)
 
-    def evaluate(self, X_test, y_test):
+    def evaluate(self, X_test: pd.DataFrame, y_test: pd.Series):
         '''
         Method to evaluate the model. It will compute the mean absolute error (MAE) and the mean squared error (MSE).
         :param X_test: pd.DataFrame with the features.
