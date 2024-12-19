@@ -1,7 +1,15 @@
+import os
+import logging
 import pandas as pd
 import numpy as np
 from abc import ABC, abstractmethod
 from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+
+logging.getLogger().setLevel(os.environ.get("LOG_LEVEL", "INFO"))
+logging.basicConfig(level=logging.INFO)
+
 
 # Estimator will be an abstract class, and then we will define our different estimators like the baseline model or the linear model as subclasses of Estimator.
 class Estimator(ABC):
@@ -44,19 +52,10 @@ class BaselineModel_sum(Estimator):
     It computes the velocity for each transport type as the sum of the pickup to delivery distance (computed using the haversine distance) divided by the sum of the pickup to delivery (PD) time.
     This is not the best way to compute the velocity, as we are loosing variability info about velocity for each order.
     '''
-    def __init__(self):
-        self.X_train = None
-        self.y_train = None
+    def __init__(self, theta: pd.Series = None):
         self.theta = None
-
-    def dataset_shape(self):
-        '''
-        Method to print the shape of the train and test datasets.
-        :return: shape of the train and test datasets.
-        '''
-        print("Train dataset", self.X_train.shape, self.y_train.shape)
-        print("Test dataset", self.X_test.shape, self.y_test.shape)
-        return self.X_train.shape, self.y_train.shape, self.X_test.shape, self.y_test.shape
+        if theta is not None:
+            self.theta = theta
 
     def fit(self, X_train: pd.DataFrame, y_train: pd.Series):
         '''
@@ -64,10 +63,9 @@ class BaselineModel_sum(Estimator):
         :param X_train: pd.DataFrame with the features.
         :return self: the fitted model.
         '''
-        self.X_train = X_train
-        self.y_train = y_train
+        logging.debug("Train dataset: X: ", X_train.shape, "y: ", y_train.shape)
         velocity = {}
-        for name, group in self.X_train.groupby('transport'):
+        for name, group in X_train.groupby('transport'):
             velocity[name] = sum(group['pd_distance_haversine_m']) / sum((group['delivery_entering_timestamp'] - group['pickup_timestamp']).dt.total_seconds())
 
         velocity = pd.Series(velocity, name='velocity (m/s)')
@@ -111,18 +109,10 @@ class BaselineModel_mean(Estimator):
     Baseline model that predicts the time from pickup to delivery.
     It computes the velocity for each transport type and for each order, and then computes the mean of the velocity for each transport type.
     '''
-    def __init__(self):
-        self.X_train = None
-        self.y_train = None
+    def __init__(self, theta: pd.Series = None):
         self.theta = None
-
-    def dataset_shape(self):
-        '''
-        Method to print the shape of the train and test datasets.
-        :return: shape of the train and test datasets.
-        '''
-        print("Train dataset", self.X_train.shape, self.y_train.shape)
-        print("Test dataset", self.X_test.shape, self.y_test.shape)
+        if theta is not None:
+            self.theta = theta
 
     def fit(self, X_train: pd.DataFrame, y_train: pd.Series):
         '''
@@ -131,8 +121,6 @@ class BaselineModel_mean(Estimator):
         :param y_train: pd.Series with the target variable.
         :return self: the fitted model.
         '''
-        self.X_train = X_train
-        self.y_train = y_train
         X_train['time'] = (X_train['delivery_entering_timestamp'] - X_train['pickup_timestamp']).dt.total_seconds()
         X_train['velocity'] = X_train['pd_distance_haversine_m'] / X_train['time']
         # For few rows we have that delivery_entering_timestamp = pickup_timestamp, so the velocity is infinite. We will drop the rows where the velocity is infinite
@@ -176,18 +164,10 @@ class LinearModel(Estimator):
     Linear model that predicts the time from pickup to delivery.
     It computes the linear regression model using the features as input.
     '''
-    def __init__(self):
-        self.X_train = None
-        self.y_train = None
+    def __init__(self, theta: pd.Series = None):
         self.theta = None
-
-    def dataset_shape(self):
-        '''
-        Method to print the shape of the train and test datasets.
-        :return: shape of the train and test datasets.
-        '''
-        print("Train dataset", self.X_train.shape, self.y_train.shape)
-        print("Test dataset", self.X_test.shape, self.y_test.shape)
+        if theta is not None:
+            self.theta = theta
 
     def fit(self, X_train: pd.DataFrame, y_train: pd.Series):
         '''
@@ -196,10 +176,14 @@ class LinearModel(Estimator):
         :param y_train: pd.Series with the target variable.
         :return self: the fitted model.
         '''
-        self.X_train = X_train
-        self.y_train = y_train
-        reg = LinearRegression().fit(X_train, y_train)
-        self.theta = reg
+        # One-Hot Encoding:
+        encoder_one_hot = OneHotEncoder()
+        categorical_cols = X_train.select_dtypes(include=["object", "category"]).columns.tolist()
+        X_train_one_hot = X_train
+        for col in categorical_cols:
+            X_train_one_hot = encoder_one_hot.fit_transform(X_train_one_hot[[col]])
+        reg_one_hot = LinearRegression().fit(X_train_one_hot, y_train)
+        self.theta = reg_one_hot
         return self
 
     def predict(self, X: pd.DataFrame):
@@ -221,5 +205,13 @@ class LinearModel(Estimator):
         y_hat = self.predict(X_test)
         mae = np.mean(np.abs(y_test - y_hat))
         mse = np.mean((y_test - y_hat)**2)
-        return mae, mse
+
+        encoder_one_hot = OneHotEncoder()
+        X_test_one_hot = encoder_one_hot.transform(X_test[['color']])
+
+        #StandardScaler() -- in sktlearn
+
+        y_hat_one_hot = self.predict(X_test_one_hot)
+        mse_one_hot = mean_squared_error(y_test, y_hat_one_hot)
+        return mae, mse, mse_one_hot
 
