@@ -8,7 +8,7 @@ from sklearn.preprocessing import OneHotEncoder
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
 logging.getLogger().setLevel(os.environ.get("LOG_LEVEL", "INFO"))
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 
 
 # Estimator will be an abstract class, and then we will define our different estimators like the baseline model or the linear model as subclasses of Estimator.
@@ -52,10 +52,10 @@ class BaselineModel_sum(Estimator):
     It computes the velocity for each transport type as the sum of the pickup to delivery distance (computed using the haversine distance) divided by the sum of the pickup to delivery (PD) time.
     This is not the best way to compute the velocity, as we are loosing variability info about velocity for each order.
     '''
-    def __init__(self, theta: pd.Series = None):
+    def __init__(self, model: pd.Series = None):
         self.theta = None
-        if theta is not None:
-            self.theta = theta
+        if model is not None:
+            self.theta = model
 
     def fit(self, X_train: pd.DataFrame, y_train: pd.Series):
         '''
@@ -109,10 +109,10 @@ class BaselineModel_mean(Estimator):
     Baseline model that predicts the time from pickup to delivery.
     It computes the velocity for each transport type and for each order, and then computes the mean of the velocity for each transport type.
     '''
-    def __init__(self, theta: pd.Series = None):
+    def __init__(self, model: pd.Series = None):
         self.theta = None
-        if theta is not None:
-            self.theta = theta
+        if model is not None:
+            self.theta = model
 
     def fit(self, X_train: pd.DataFrame, y_train: pd.Series):
         '''
@@ -164,10 +164,10 @@ class LinearModel(Estimator):
     Linear model that predicts the time from pickup to delivery.
     It computes the linear regression model using the features as input.
     '''
-    def __init__(self, theta: pd.Series = None):
-        self.theta = None
-        if theta is not None:
-            self.theta = theta
+    def __init__(self, model: LinearRegression() = None):
+        self.model = LinearRegression()
+        if model is not None:
+            self.theta = model
 
     def fit(self, X_train: pd.DataFrame, y_train: pd.Series):
         '''
@@ -177,12 +177,25 @@ class LinearModel(Estimator):
         :return self: the fitted model.
         '''
         # One-Hot Encoding:
-        encoder_one_hot = OneHotEncoder()
-        categorical_cols = X_train.select_dtypes(include=["object", "category"]).columns.tolist()
-        X_train_one_hot = X_train
-        for col in categorical_cols:
-            X_train_one_hot = encoder_one_hot.fit_transform(X_train_one_hot[[col]])
-        reg_one_hot = LinearRegression().fit(X_train_one_hot, y_train)
+        #encoder_one_hot = OneHotEncoder()
+        #categorical_cols = X_train.select_dtypes(include=["object", "category"]).columns.tolist()
+        #logging.debug(categorical_cols)
+        #X_train_one_hot = X_train
+        #for col in categorical_cols:
+        #    logging.debug(col)
+        #    X_train_one_hot = encoder_one_hot.fit_transform(X_train_one_hot[[col]])
+        # Check for any remaining non-numeric values and handle them
+        #logging.debug(X_train_one_hot.dtypes)
+        #logging.debug(X_train_one_hot.isnull().sum())
+        #logging.debug(X_train_one_hot[categorical_cols].dtypes)
+        # Perform one-hot encoding
+        X_encoded = pd.get_dummies(X_train, drop_first=True)
+
+        # Ensure all data is numerical
+        X_encoded = X_encoded.apply(pd.to_numeric, errors='coerce')
+
+        # Fit the model
+        reg_one_hot = LinearRegression().fit(X_encoded, y_train)
         self.theta = reg_one_hot
         return self
 
@@ -192,7 +205,16 @@ class LinearModel(Estimator):
         :param X: pd.DataFrame with the features.
         :return: y_hat: pd.Series with the predicted values.
         '''
-        return self.theta.predict(X)
+        # Perform one-hot encoding
+        X_encoded = pd.get_dummies(X, drop_first=True)
+
+        # Ensure all data is numerical
+        X_encoded = X_encoded.apply(pd.to_numeric, errors='coerce')
+
+        # Align columns with the training data
+        X_encoded = X_encoded.reindex(columns=self.model.feature_names_in_, fill_value=0)
+
+        return self.model.predict(X_encoded)
 
     def evaluate(self, X_test: pd.DataFrame, y_test: pd.Series):
         '''
@@ -206,12 +228,5 @@ class LinearModel(Estimator):
         mae = np.mean(np.abs(y_test - y_hat))
         mse = np.mean((y_test - y_hat)**2)
 
-        encoder_one_hot = OneHotEncoder()
-        X_test_one_hot = encoder_one_hot.transform(X_test[['color']])
-
-        #StandardScaler() -- in sktlearn
-
-        y_hat_one_hot = self.predict(X_test_one_hot)
-        mse_one_hot = mean_squared_error(y_test, y_hat_one_hot)
-        return mae, mse, mse_one_hot
+        return mae, mse
 
