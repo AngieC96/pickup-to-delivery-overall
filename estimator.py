@@ -195,8 +195,7 @@ class LinearModel(Estimator):
         X_encoded = X_encoded.apply(pd.to_numeric, errors='coerce')
 
         # Fit the model
-        reg_one_hot = LinearRegression().fit(X_encoded, y_train)
-        self.theta = reg_one_hot
+        reg_one_hot = self.model.fit(X_encoded, y_train)
         return self
 
     def predict(self, X: pd.DataFrame):
@@ -212,7 +211,7 @@ class LinearModel(Estimator):
         X_encoded = X_encoded.apply(pd.to_numeric, errors='coerce')
 
         # Align columns with the training data
-        X_encoded = X_encoded.reindex(columns=self.model.feature_names_in_, fill_value=0)
+        #X_encoded = X_encoded.reindex(columns=self.model.feature_names_in_, fill_value=0)
 
         return self.model.predict(X_encoded)
 
