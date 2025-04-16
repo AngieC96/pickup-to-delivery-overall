@@ -9,7 +9,7 @@ from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, StandardSc
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
 logging.getLogger().setLevel(os.environ.get("LOG_LEVEL", "INFO"))
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO) # USe INFO to see more informations, WARNING to see less
 
 
 # Estimator will be an abstract class, and then we will define our different estimators like the baseline model or the linear model as subclasses of Estimator.
@@ -64,7 +64,7 @@ class BaselineModel_sum(Estimator):
         :param X_train: pd.DataFrame with the features.
         :return self: the fitted model.
         '''
-        logging.debug("Train dataset: X: ", X_train.shape, "y: ", y_train.shape)
+        logging.info(f"Train datasets shapes: X: {X_train.shape}, y: {y_train.shape}")
         velocity = {}
         for name, group in X_train.groupby('transport'):
             velocity[name] = sum(group['pd_distance_haversine_m']) / sum((group['delivery_entering_timestamp'] - group['pickup_timestamp']).dt.total_seconds())
@@ -122,6 +122,7 @@ class BaselineModel_mean(Estimator):
         :param y_train: pd.Series with the target variable.
         :return self: the fitted model.
         '''
+        logging.info(f"Train datasets shapes: X: {X_train.shape}, y: {y_train.shape}")
         X_train['time'] = (X_train['delivery_entering_timestamp'] - X_train['pickup_timestamp']).dt.total_seconds()
         X_train['velocity'] = X_train['pd_distance_haversine_m'] / X_train['time']
         # For few rows we have that delivery_entering_timestamp = pickup_timestamp, so the velocity is infinite. We will drop the rows where the velocity is infinite
@@ -160,195 +161,100 @@ class BaselineModel_mean(Estimator):
         return mae, mse
 
 
-def _encode_timestamps_dummy_variables(X: pd.DataFrame):
+class LinearModel(Estimator):
     '''
-    Function to encode the timestamps as dummy variables.
-    :param X: pd.DataFrame with the features.
-    :return:
+    Linear model that predicts the time from pickup to delivery.
+    It computes a linear regression model using the features as input.
+
+    It uses the sklearn library to compute the linear regression model.
+    With the option model_type, you can choose between:
+    - linear: it will use the LinearRegression from sklearn.
+    - SGD or sgd: it will use the SGDRegressor from sklearn.
+
+    It can perform different encodings:
+    - dummy: it will encode the timestamps as dummy variables.
+    - dummy+difference: it will encode the timestamps as dummy variables and compute the difference between the timestamps.
+    - cyclical: it will encode the timestamps as cyclical variables.
+    - cyclical+difference: it will encode the timestamps as cyclical variables and compute the difference between the timestamps.
     '''
+    def __init__(self, model: LinearRegression = None, model_type = 'linear', encoding = 'cyclical'):
+        if model_type == 'linear':
+            self.model = LinearRegression()
+        elif model_type == 'SGD' or model_type == 'sgd':
+            self.model = make_pipeline(StandardScaler(),
+                        SGDRegressor(max_iter=1000, tol=1e-3))
+        else:
+            raise ValueError(f"Unknown model type: {model_type}")
+        
+        if model is not None:
+            self.theta = model
+            if self.model_type == 'linear':
+                assert isinstance(self.model, LinearRegression), f"The model provided must be a LinearRegression instance in according to {model_type}"
+            if self.model_type == 'SGD':
+                assert isinstance(self.model, SGDRegressor), f"The model provided must be a SGDRegressor instance in according to {model_type}"
+        
+        self.encoding = encoding
 
-    # Perform one-hot encoding
-    categorical_cols = X.select_dtypes(include=["object", "category"]).columns.tolist()
-    timestamp_cols = [col for col in X.columns if 'timestamp' in col]
-    X_encoded = X.copy()
-    X_encoded.drop(columns=['creation_date'], inplace=True)
+    def _encode_timestamps_dummy_variables_create(self, X: pd.DataFrame, timestamp_cols: list):
+        X_encoded = X.copy()
+        X_encoded.drop(columns=['creation_date'], inplace=True)
 
-    X_encoded.loc[:, 'creation_date_year'] = X_encoded['creation_timestamp'].dt.year
-    X_encoded.loc[:, 'creation_date_month'] = X_encoded['creation_timestamp'].dt.month
-    X_encoded.loc[:, 'creation_date_day'] = X_encoded['creation_timestamp'].dt.day
-    for col in timestamp_cols:
-        X_encoded.loc[:, f'{col}_hour'] = X_encoded[col].dt.hour
-        X_encoded.loc[:, f'{col}_minute'] = X_encoded[col].dt.minute
-        X_encoded.loc[:, f'{col}_second'] = X_encoded[col].dt.second
-    X_encoded.loc[:, 'creation_date_day'] = X_encoded['creation_timestamp'].dt.day
+        X_encoded.loc[:, 'creation_date_year'] = X_encoded['creation_timestamp'].dt.year
+        X_encoded.loc[:, 'creation_date_month'] = X_encoded['creation_timestamp'].dt.month
+        X_encoded.loc[:, 'creation_date_day'] = X_encoded['creation_timestamp'].dt.day
+        X_encoded.loc[:, 'creation_date_weekday'] = X_encoded['creation_timestamp'].dt.weekday
+        for col in timestamp_cols:
+            X_encoded.loc[:, f'{col}_hour'] = X_encoded[col].dt.hour
+            X_encoded.loc[:, f'{col}_minute'] = X_encoded[col].dt.minute
+            X_encoded.loc[:, f'{col}_second'] = X_encoded[col].dt.second
+        return X_encoded
 
-    X_encoded.drop(columns=timestamp_cols, inplace=True)
-    X_encoded = pd.get_dummies(X_encoded, drop_first=True)
+    def _encode_timestamps_dummy_variables(self, X: pd.DataFrame):
+        '''
+        Function to encode the timestamps as dummy variables.
+        :param X: pd.DataFrame with the features.
+        :return: X_encoded: pd.DataFrame with the encoded features.
+        '''
 
-    # Ensure all data is numerical
-    X_encoded = X_encoded.apply(pd.to_numeric, errors='coerce')
-    return X_encoded
+        # Perform one-hot encoding
+        categorical_cols = X.select_dtypes(include=["object", "category"]).columns.tolist()
+        timestamp_cols = [col for col in X.columns if 'timestamp' in col]
+        X_encoded = self._encode_timestamps_dummy_variables_create(X, timestamp_cols)
 
+        X_encoded.drop(columns=timestamp_cols, inplace=True)
+        X_encoded = pd.get_dummies(X_encoded, drop_first=True)
 
-def _encode_timestamps_dummy_variables_difference(X: pd.DataFrame):
-    '''
-    Function to encode the timestamps as dummy variables.
-    :param X: pd.DataFrame with the features.
-    :return:
-    '''
-
-    # Perform one-hot encoding
-    categorical_cols = X.select_dtypes(include=["object", "category"]).columns.tolist()
-    timestamp_cols = [col for col in X.columns if 'timestamp' in col]
-    X_encoded = X.copy()
-    X_encoded.drop(columns=['creation_date'], inplace=True)
+        # Ensure all data is numerical
+        X_encoded = X_encoded.apply(pd.to_numeric, errors='coerce')
+        return X_encoded
     
-    X_encoded.loc[:, 'creation_date_year'] = X_encoded['creation_timestamp'].dt.year
-    X_encoded.loc[:, 'creation_date_month'] = X_encoded['creation_timestamp'].dt.month
-    X_encoded.loc[:, 'creation_date_day'] = X_encoded['creation_timestamp'].dt.day
-    for col in timestamp_cols:
-        X_encoded.loc[:, f'{col}_hour'] = X_encoded[col].dt.hour
-        X_encoded.loc[:, f'{col}_minute'] = X_encoded[col].dt.minute
-        X_encoded.loc[:, f'{col}_second'] = X_encoded[col].dt.second
+    def _encode_timestamps_difference(self, X_encoded: pd.DataFrame):
+        X_encoded.loc[:, 'activation_time'] = (X_encoded['activation_timestamp'] - X_encoded['creation_timestamp']).dt.seconds
+        X_encoded.loc[:, 'pickup_time'] = (X_encoded['pickup_timestamp'] - X_encoded['creation_timestamp']).dt.seconds
+        X_encoded.loc[:, 'delivery_entering_time'] = (X_encoded['delivery_entering_timestamp'] - X_encoded['creation_timestamp']).dt.seconds
+        X_encoded.loc[:, 'delivery_time'] = (X_encoded['delivery_timestamp'] - X_encoded['creation_timestamp']).dt.seconds
+        return X_encoded
 
-    X_encoded.loc[:, 'activation_time'] = (X_encoded['activation_timestamp'] - X_encoded['creation_timestamp']).dt.seconds
-    X_encoded.loc[:, 'pickup_time'] = (X_encoded['pickup_timestamp'] - X_encoded['creation_timestamp']).dt.seconds
-    X_encoded.loc[:, 'delivery_entering_time'] = (X_encoded['delivery_entering_timestamp'] - X_encoded['creation_timestamp']).dt.seconds
-    X_encoded.loc[:, 'delivery_time'] = (X_encoded['delivery_timestamp'] - X_encoded['creation_timestamp']).dt.seconds
-
-    X_encoded.drop(columns=timestamp_cols, inplace=True)
-    X_encoded = pd.get_dummies(X_encoded, drop_first=True)
-
-    # Ensure all data is numerical
-    X_encoded = X_encoded.apply(pd.to_numeric, errors='coerce')
-    return X_encoded
-
-
-class LinearModel_encode_timestamps_dummy_variables(Estimator):
-    '''
-    Linear model that predicts the time from pickup to delivery.
-    It computes the linear regression model using the features as input.
-    '''
-    def __init__(self, model: LinearRegression = None):
-        self.model = LinearRegression()
-        if model is not None:
-            self.theta = model
-
-    def fit(self, X_train: pd.DataFrame, y_train: pd.Series):
+    def _encode_timestamps_dummy_variables_difference(self, X: pd.DataFrame):
         '''
-        Method to fit the model to the data. It will compute the linear regression model.
-        :param X_train: pd.DataFrame with the features.
-        :param y_train: pd.Series with the target variable.
-        :return self: the fitted model.
-        '''
-
-        # Perform one-hot encoding
-        logging.info("Starting to encode variables")
-        X_encoded = _encode_timestamps_dummy_variables(X_train)
-        logging.info("Finished to encode variables. Starting to fit the model")
-
-        # Fit the model
-        self.model.fit(X_encoded, y_train)
-        logging.info("Finished training the model")
-        return self
-
-    def predict(self, X: pd.DataFrame):
-        '''
-        Method to predict the target variable. The function will give you the actual predictions for all samples inputted.
+        Function to encode the timestamps as dummy variables adding the difference between the timestamps.
+        The difference is computed as the difference between the timestamp and the creation timestamp.
+        The difference is computed in seconds.
         :param X: pd.DataFrame with the features.
-        :return: y_hat: pd.Series with the predicted values.
-        '''
-        # Perform one-hot encoding
-        X_encoded = _encode_timestamps_dummy_variables(X)
-
-        # Align columns with the training data
-        X_encoded = X_encoded.reindex(columns=self.model.feature_names_in_, fill_value=0)
-
-        return self.model.predict(X_encoded)
-
-    def evaluate(self, X_test: pd.DataFrame, y_test: pd.Series):
-        '''
-        Method to evaluate the model. It will compute the mean absolute error (MAE) and the mean squared error (MSE).
-        :param X_test: pd.DataFrame with the features.
-        :param y_test: pd.Series with the target variable.
-        :return: mae: float with the mean absolute error.
-        :return: mse: float with the mean squared error.
-        '''
-        y_hat = self.predict(X_test)
-        mae = np.mean(np.abs(y_test - y_hat))
-        mse = np.mean((y_test - y_hat)**2)
-
-        return mae, mse
-
-
-class LinearModelSGD_encode_timestamps_dummy_variables(Estimator):
-    '''
-    Linear model that predicts the time from pickup to delivery.
-    It computes the linear regression model using the features as input.
-    '''
-    def __init__(self, model: LinearRegression = None):
-        self.model = make_pipeline(StandardScaler(),
-                    SGDRegressor(max_iter=1000, tol=1e-3))
-        if model is not None:
-            self.theta = model
-
-    def fit(self, X_train: pd.DataFrame, y_train: pd.Series):
-        '''
-        Method to fit the model to the data. It will compute the linear regression model.
-        :param X_train: pd.DataFrame with the features.
-        :param y_train: pd.Series with the target variable.
-        :return self: the fitted model.
+        :return: X_encoded: pd.DataFrame with the encoded features.
         '''
 
-        # Perform one-hot encoding
-        logging.info("Starting to encode variables")
-        X_encoded = _encode_timestamps_dummy_variables(X_train)
-        logging.info("Finished to encode variables. Starting to fit the model")
+        timestamp_cols = [col for col in X.columns if 'timestamp' in col]
+        X_encoded = self._encode_timestamps_dummy_variables_create(X, timestamp_cols)
+        X_encoded = self._encode_timestamps_difference(X_encoded)
 
-        # Fit the model
-        self.model.fit(X_encoded, y_train)
-        # do a preprocessimg model that is only the StandardScaler then in the fit do the fit of the model
-        logging.info("Finished training the model")
-        return self
+        X_encoded.drop(columns=timestamp_cols, inplace=True)
+        X_encoded = pd.get_dummies(X_encoded, drop_first=True)
 
-    def predict(self, X: pd.DataFrame):
-        '''
-        Method to predict the target variable. The function will give you the actual predictions for all samples inputted.
-        :param X: pd.DataFrame with the features.
-        :return: y_hat: pd.Series with the predicted values.
-        '''
-        # Perform one-hot encoding
-        X_encoded = _encode_timestamps_dummy_variables(X)
+        # Ensure all data is numerical
+        X_encoded = X_encoded.apply(pd.to_numeric, errors='coerce')
 
-        # Align columns with the training data
-        X_encoded = X_encoded.reindex(columns=self.model.feature_names_in_, fill_value=0)
-
-        return self.model.predict(X_encoded)
-
-    def evaluate(self, X_test: pd.DataFrame, y_test: pd.Series):
-        '''
-        Method to evaluate the model. It will compute the mean absolute error (MAE) and the mean squared error (MSE).
-        :param X_test: pd.DataFrame with the features.
-        :param y_test: pd.Series with the target variable.
-        :return: mae: float with the mean absolute error.
-        :return: mse: float with the mean squared error.
-        '''
-        y_hat = self.predict(X_test)
-        mae = np.mean(np.abs(y_test - y_hat))
-        mse = np.mean((y_test - y_hat)**2)
-
-        return mae, mse
-
-
-class LinearModel_encode_timestamps_cyclical(Estimator):
-    '''
-    Linear model that predicts the time from pickup to delivery.
-    It computes the linear regression model using the features as input.
-    '''
-    def __init__(self, model: LinearRegression = None):
-        self.model = LinearRegression()
-        if model is not None:
-            self.theta = model
+        return X_encoded
 
     def _sin_transformer(self, period):
         return FunctionTransformer(lambda x: np.sin(x / period * 2 * np.pi))
@@ -356,32 +262,30 @@ class LinearModel_encode_timestamps_cyclical(Estimator):
     def _cos_transformer(self, period):
         return FunctionTransformer(lambda x: np.cos(x / period * 2 * np.pi))
 
-    def _encode_timestamps_cyclical(self, X: pd.DataFrame):
-        '''
-        Function to encode the timestamps as dummy variables.
-        :param X: pd.DataFrame with the features.
-        :return:
-        '''
-
-        # Perform one-hot encoding
-        categorical_cols = X.select_dtypes(include=["object", "category"]).columns.tolist()
-        timestamp_cols = [col for col in X.columns if 'timestamp' in col]
+    def _encode_timestamps_cyclical_create(self, X: pd.DataFrame, timestamp_cols: list):
+        # Perform one-hot encoding¡
         X_encoded = X.copy()
+        X_encoded.drop(columns=['creation_date'], inplace=True)
 
-        X_encoded["creation_date_day"] = X_encoded["creation_timestamp"].dt.day
-        X_encoded.loc[:, 'creation_date_day_sin'] = self._sin_transformer(31).fit_transform(X_encoded[['creation_date_day']])
-        X_encoded.loc[:, 'creation_date_day_cos'] = self._cos_transformer(31).fit_transform(X_encoded[['creation_date_day']])
-        X_encoded.drop(columns="creation_date_day", inplace=True)
+        X_encoded["creation_date_year"] = X_encoded["creation_timestamp"].dt.year
+        X_encoded.loc[:, 'creation_date_year_sin'] = self._sin_transformer(1).fit_transform(X_encoded[['creation_date_year']])
+        X_encoded.loc[:, 'creation_date_year_cos'] = self._cos_transformer(1).fit_transform(X_encoded[['creation_date_year']])
+        X_encoded.drop(columns="creation_date_year", inplace=True)
 
         X_encoded["creation_date_month"] = X_encoded["creation_timestamp"].dt.month
         X_encoded.loc[:, 'creation_date_month_sin'] = self._sin_transformer(12).fit_transform(X_encoded[['creation_date_month']])
         X_encoded.loc[:, 'creation_date_month_cos'] = self._cos_transformer(12).fit_transform(X_encoded[['creation_date_month']])
         X_encoded.drop(columns="creation_date_month", inplace=True)
 
-        X_encoded["creation_date_year"] = X_encoded["creation_timestamp"].dt.year
-        X_encoded.loc[:, 'creation_date_year_sin'] = self._sin_transformer(1).fit_transform(X_encoded[['creation_date_year']])
-        X_encoded.loc[:, 'creation_date_year_cos'] = self._cos_transformer(1).fit_transform(X_encoded[['creation_date_year']])
-        X_encoded.drop(columns="creation_date_year", inplace=True)
+        X_encoded["creation_date_day"] = X_encoded["creation_timestamp"].dt.day
+        X_encoded.loc[:, 'creation_date_day_sin'] = self._sin_transformer(31).fit_transform(X_encoded[['creation_date_day']])
+        X_encoded.loc[:, 'creation_date_day_cos'] = self._cos_transformer(31).fit_transform(X_encoded[['creation_date_day']])
+        X_encoded.drop(columns="creation_date_day", inplace=True)
+
+        X_encoded.loc[:, 'creation_date_weekday'] = X_encoded['creation_timestamp'].dt.weekday
+        X_encoded.loc[:, 'creation_date_weekday_sin'] = self._sin_transformer(31).fit_transform(X_encoded[['creation_date_weekday']])
+        X_encoded.loc[:, 'creation_date_weekday_cos'] = self._cos_transformer(31).fit_transform(X_encoded[['creation_date_weekday']])
+        X_encoded.drop(columns="creation_date_weekday", inplace=True)
 
         for col in timestamp_cols:
             X_encoded.loc[:, f'{col}_hour'] = X_encoded[col].dt.hour
@@ -398,6 +302,17 @@ class LinearModel_encode_timestamps_cyclical(Estimator):
             X_encoded.loc[:, f'{col}_second_sin'] = self._sin_transformer(60).fit_transform(X_encoded[[f'{col}_second']])
             X_encoded.loc[:, f'{col}_second_cos'] = self._cos_transformer(60).fit_transform(X_encoded[[f'{col}_second']])
             X_encoded.drop(columns=f'{col}_second', inplace=True)
+        
+        return X_encoded
+    
+    def _encode_timestamps_cyclical(self, X: pd.DataFrame):
+        '''
+        Function to encode the timestamps as cyclical variables.
+        :param X: pd.DataFrame with the features.
+        :return: X_encoded: pd.DataFrame with the encoded features.
+        '''
+        timestamp_cols = [col for col in X.columns if 'timestamp' in col]
+        X_encoded = self._encode_timestamps_cyclical_create(X, timestamp_cols)
 
         X_encoded.drop(columns=timestamp_cols, inplace=True)
         X_encoded = pd.get_dummies(X_encoded, drop_first=True)
@@ -405,6 +320,26 @@ class LinearModel_encode_timestamps_cyclical(Estimator):
         # Ensure all data is numerical
         X_encoded = X_encoded.apply(pd.to_numeric, errors='coerce')
         return X_encoded
+    
+    def _encode_timestamps_cyclical_difference(self, X: pd.DataFrame):
+        '''
+        Function to encode the timestamps as dummy variables adding the difference between the timestamps.
+        The difference is computed as the difference between the timestamp and the creation timestamp.
+        The difference is computed in seconds.
+        :param X: pd.DataFrame with the features.
+        :return: X_encoded: pd.DataFrame with the encoded features.
+        '''
+        timestamp_cols = [col for col in X.columns if 'timestamp' in col]
+        X_encoded = self._encode_timestamps_cyclical_create(X, timestamp_cols)
+        X_encoded = self._encode_timestamps_difference(X_encoded)
+
+        X_encoded.drop(columns=timestamp_cols, inplace=True)
+        X_encoded = pd.get_dummies(X_encoded, drop_first=True)
+
+        # Ensure all data is numerical
+        X_encoded = X_encoded.apply(pd.to_numeric, errors='coerce')
+        return X_encoded
+    
 
     def fit(self, X_train: pd.DataFrame, y_train: pd.Series):
         '''
@@ -413,9 +348,21 @@ class LinearModel_encode_timestamps_cyclical(Estimator):
         :param y_train: pd.Series with the target variable.
         :return self: the fitted model.
         '''
-
+        logging.info(f"Train datasets shapes: X: {X_train.shape}, y: {y_train.shape}")
         logging.info("Starting to encode variables")
-        X_encoded = self._encode_timestamps_cyclical(X_train)
+        # Perform one-hot encoding
+        if self.encoding == 'dummy':
+            X_encoded = self._encode_timestamps_dummy_variables(X_train)
+        elif self.encoding == 'dummy+difference':
+            X_encoded = self._encode_timestamps_dummy_variables_difference(X_train)
+        elif self.encoding == 'cyclical':
+            X_encoded = self._encode_timestamps_cyclical(X_train)
+        elif self.encoding == 'cyclical+difference':
+            X_encoded = self._encode_timestamps_cyclical_difference(X_train)
+        else:
+            raise ValueError(f"Unknown encoding type: {self.encoding}")
+        
+        logging.info(f"Encoded dataset shape: X: {X_encoded.shape}")
         logging.info("Finished to encode variables. Starting to fit the model")
 
         # Fit the model
@@ -430,7 +377,16 @@ class LinearModel_encode_timestamps_cyclical(Estimator):
         :return: y_hat: pd.Series with the predicted values.
         '''
         # Perform one-hot encoding
-        X_encoded = self._encode_timestamps_cyclical(X)
+        if self.encoding == 'dummy':
+            X_encoded = self._encode_timestamps_dummy_variables(X)
+        elif self.encoding == 'dummy+difference':
+            X_encoded = self._encode_timestamps_dummy_variables_difference(X)
+        elif self.encoding == 'cyclical':
+            X_encoded = self._encode_timestamps_cyclical(X)
+        elif self.encoding == 'cyclical+difference':
+            X_encoded = self._encode_timestamps_cyclical_difference(X)
+        else:
+            raise ValueError(f"Unknown encoding type: {self.encoding}")
 
         # Align columns with the training data
         X_encoded = X_encoded.reindex(columns=self.model.feature_names_in_, fill_value=0)
@@ -450,4 +406,3 @@ class LinearModel_encode_timestamps_cyclical(Estimator):
         mse = np.mean((y_test - y_hat)**2)
 
         return mae, mse
-
