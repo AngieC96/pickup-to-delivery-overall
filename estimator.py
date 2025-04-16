@@ -171,6 +171,8 @@ def _encode_timestamps_dummy_variables(X: pd.DataFrame):
     categorical_cols = X.select_dtypes(include=["object", "category"]).columns.tolist()
     timestamp_cols = [col for col in X.columns if 'timestamp' in col]
     X_encoded = X.copy()
+    X_encoded.drop(columns=['creation_date'], inplace=True)
+
     X_encoded.loc[:, 'creation_date_year'] = X_encoded['creation_timestamp'].dt.year
     X_encoded.loc[:, 'creation_date_month'] = X_encoded['creation_timestamp'].dt.month
     X_encoded.loc[:, 'creation_date_day'] = X_encoded['creation_timestamp'].dt.day
@@ -178,6 +180,41 @@ def _encode_timestamps_dummy_variables(X: pd.DataFrame):
         X_encoded.loc[:, f'{col}_hour'] = X_encoded[col].dt.hour
         X_encoded.loc[:, f'{col}_minute'] = X_encoded[col].dt.minute
         X_encoded.loc[:, f'{col}_second'] = X_encoded[col].dt.second
+    X_encoded.loc[:, 'creation_date_day'] = X_encoded['creation_timestamp'].dt.day
+
+    X_encoded.drop(columns=timestamp_cols, inplace=True)
+    X_encoded = pd.get_dummies(X_encoded, drop_first=True)
+
+    # Ensure all data is numerical
+    X_encoded = X_encoded.apply(pd.to_numeric, errors='coerce')
+    return X_encoded
+
+
+def _encode_timestamps_dummy_variables_difference(X: pd.DataFrame):
+    '''
+    Function to encode the timestamps as dummy variables.
+    :param X: pd.DataFrame with the features.
+    :return:
+    '''
+
+    # Perform one-hot encoding
+    categorical_cols = X.select_dtypes(include=["object", "category"]).columns.tolist()
+    timestamp_cols = [col for col in X.columns if 'timestamp' in col]
+    X_encoded = X.copy()
+    X_encoded.drop(columns=['creation_date'], inplace=True)
+    
+    X_encoded.loc[:, 'creation_date_year'] = X_encoded['creation_timestamp'].dt.year
+    X_encoded.loc[:, 'creation_date_month'] = X_encoded['creation_timestamp'].dt.month
+    X_encoded.loc[:, 'creation_date_day'] = X_encoded['creation_timestamp'].dt.day
+    for col in timestamp_cols:
+        X_encoded.loc[:, f'{col}_hour'] = X_encoded[col].dt.hour
+        X_encoded.loc[:, f'{col}_minute'] = X_encoded[col].dt.minute
+        X_encoded.loc[:, f'{col}_second'] = X_encoded[col].dt.second
+
+    X_encoded.loc[:, 'activation_time'] = (X_encoded['activation_timestamp'] - X_encoded['creation_timestamp']).dt.seconds
+    X_encoded.loc[:, 'pickup_time'] = (X_encoded['pickup_timestamp'] - X_encoded['creation_timestamp']).dt.seconds
+    X_encoded.loc[:, 'delivery_entering_time'] = (X_encoded['delivery_entering_timestamp'] - X_encoded['creation_timestamp']).dt.seconds
+    X_encoded.loc[:, 'delivery_time'] = (X_encoded['delivery_timestamp'] - X_encoded['creation_timestamp']).dt.seconds
 
     X_encoded.drop(columns=timestamp_cols, inplace=True)
     X_encoded = pd.get_dummies(X_encoded, drop_first=True)
@@ -192,7 +229,7 @@ class LinearModel_encode_timestamps_dummy_variables(Estimator):
     Linear model that predicts the time from pickup to delivery.
     It computes the linear regression model using the features as input.
     '''
-    def __init__(self, model: LinearRegression() = None):
+    def __init__(self, model: LinearRegression = None):
         self.model = LinearRegression()
         if model is not None:
             self.theta = model
@@ -249,7 +286,7 @@ class LinearModelSGD_encode_timestamps_dummy_variables(Estimator):
     Linear model that predicts the time from pickup to delivery.
     It computes the linear regression model using the features as input.
     '''
-    def __init__(self, model: LinearRegression() = None):
+    def __init__(self, model: LinearRegression = None):
         self.model = make_pipeline(StandardScaler(),
                     SGDRegressor(max_iter=1000, tol=1e-3))
         if model is not None:
@@ -270,6 +307,7 @@ class LinearModelSGD_encode_timestamps_dummy_variables(Estimator):
 
         # Fit the model
         self.model.fit(X_encoded, y_train)
+        # do a preprocessimg model that is only the StandardScaler then in the fit do the fit of the model
         logging.info("Finished training the model")
         return self
 
@@ -307,7 +345,7 @@ class LinearModel_encode_timestamps_cyclical(Estimator):
     Linear model that predicts the time from pickup to delivery.
     It computes the linear regression model using the features as input.
     '''
-    def __init__(self, model: LinearRegression() = None):
+    def __init__(self, model: LinearRegression = None):
         self.model = LinearRegression()
         if model is not None:
             self.theta = model
