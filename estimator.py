@@ -66,8 +66,9 @@ class BaselineModel_sum(Estimator):
         '''
         logging.info(f"Train datasets shapes: X: {X_train.shape}, y: {y_train.shape}")
         velocity = {}
-        for name, group in X_train.groupby('transport'):
-            velocity[name] = sum(group['pd_distance_haversine_m']) / sum((group['delivery_entering_timestamp'] - group['pickup_timestamp']).dt.total_seconds())
+        for name, X_group in X_train.groupby('transport'):
+            y_group = y_train[X_group.index]
+            velocity[name] = sum(X_group['pd_distance_haversine_m']) / sum(y_group)
 
         velocity = pd.Series(velocity, name='velocity (m/s)')
         self.theta = velocity
@@ -123,9 +124,8 @@ class BaselineModel_mean(Estimator):
         :return self: the fitted model.
         '''
         logging.info(f"Train datasets shapes: X: {X_train.shape}, y: {y_train.shape}")
-        X_train['time'] = (X_train['delivery_entering_timestamp'] - X_train['pickup_timestamp']).dt.total_seconds()
-        X_train['velocity'] = X_train['pd_distance_haversine_m'] / X_train['time']
-        # For few rows we have that delivery_entering_timestamp = pickup_timestamp, so the velocity is infinite. We will drop the rows where the velocity is infinite
+        X_train['velocity'] = X_train['pd_distance_haversine_m'] / y_train
+        # For few rows we have that delivery_timestamp = pickup_timestamp, so the velocity is infinite. We will drop the rows where the velocity is infinite
         X_new = X_train[X_train['velocity'] != np.inf].copy()
         # Differentiate the velocity per vehicle type
         velocity = X_new.groupby(X_new['transport'])['velocity'].mean()
@@ -195,20 +195,6 @@ class LinearModel(Estimator):
         
         self.encoding = encoding
 
-    def _encode_timestamps_dummy_variables_create(self, X: pd.DataFrame, timestamp_cols: list):
-        X_encoded = X.copy()
-        X_encoded.drop(columns=['creation_date'], inplace=True)
-
-        X_encoded.loc[:, 'creation_date_year'] = X_encoded['creation_timestamp'].dt.year
-        X_encoded.loc[:, 'creation_date_month'] = X_encoded['creation_timestamp'].dt.month
-        X_encoded.loc[:, 'creation_date_day'] = X_encoded['creation_timestamp'].dt.day
-        X_encoded.loc[:, 'creation_date_weekday'] = X_encoded['creation_timestamp'].dt.weekday
-        for col in timestamp_cols:
-            X_encoded.loc[:, f'{col}_hour'] = X_encoded[col].dt.hour
-            X_encoded.loc[:, f'{col}_minute'] = X_encoded[col].dt.minute
-            X_encoded.loc[:, f'{col}_second'] = X_encoded[col].dt.second
-        return X_encoded
-
     def _encode_timestamps_dummy_variables(self, X: pd.DataFrame):
         '''
         Function to encode the timestamps as dummy variables.
@@ -217,43 +203,23 @@ class LinearModel(Estimator):
         '''
 
         # Perform one-hot encoding
-        categorical_cols = X.select_dtypes(include=["object", "category"]).columns.tolist()
-        timestamp_cols = [col for col in X.columns if 'timestamp' in col]
-        X_encoded = self._encode_timestamps_dummy_variables_create(X, timestamp_cols)
+        X_encoded = X.copy()
+        X_encoded.loc[:, 'activation_date_year'] = X_encoded['activation_timestamp'].dt.year
+        X_encoded.loc[:, 'activation_date_month'] = X_encoded['activation_timestamp'].dt.month
+        X_encoded.loc[:, 'activation_date_day'] = X_encoded['activation_timestamp'].dt.day
+        X_encoded.loc[:, 'activation_date_weekday'] = X_encoded['activation_timestamp'].dt.weekday
 
-        X_encoded.drop(columns=timestamp_cols, inplace=True)
+        timestamp_cols = [col for col in X.columns if 'timestamp' in col]
+        for col in timestamp_cols:
+            X_encoded.loc[:, f'{col}_hour'] = X_encoded[col].dt.hour
+            X_encoded.loc[:, f'{col}_minute'] = X_encoded[col].dt.minute
+            X_encoded.loc[:, f'{col}_second'] = X_encoded[col].dt.second
+
+        X_encoded.drop(columns=['activation_timestamp'], inplace=True)
         X_encoded = pd.get_dummies(X_encoded, drop_first=True)
 
         # Ensure all data is numerical
         X_encoded = X_encoded.apply(pd.to_numeric, errors='coerce')
-        return X_encoded
-    
-    def _encode_timestamps_difference(self, X_encoded: pd.DataFrame):
-        X_encoded.loc[:, 'activation_time'] = (X_encoded['activation_timestamp'] - X_encoded['creation_timestamp']).dt.seconds
-        X_encoded.loc[:, 'pickup_time'] = (X_encoded['pickup_timestamp'] - X_encoded['creation_timestamp']).dt.seconds
-        X_encoded.loc[:, 'delivery_entering_time'] = (X_encoded['delivery_entering_timestamp'] - X_encoded['creation_timestamp']).dt.seconds
-        X_encoded.loc[:, 'delivery_time'] = (X_encoded['delivery_timestamp'] - X_encoded['creation_timestamp']).dt.seconds
-        return X_encoded
-
-    def _encode_timestamps_dummy_variables_difference(self, X: pd.DataFrame):
-        '''
-        Function to encode the timestamps as dummy variables adding the difference between the timestamps.
-        The difference is computed as the difference between the timestamp and the creation timestamp.
-        The difference is computed in seconds.
-        :param X: pd.DataFrame with the features.
-        :return: X_encoded: pd.DataFrame with the encoded features.
-        '''
-
-        timestamp_cols = [col for col in X.columns if 'timestamp' in col]
-        X_encoded = self._encode_timestamps_dummy_variables_create(X, timestamp_cols)
-        X_encoded = self._encode_timestamps_difference(X_encoded)
-
-        X_encoded.drop(columns=timestamp_cols, inplace=True)
-        X_encoded = pd.get_dummies(X_encoded, drop_first=True)
-
-        # Ensure all data is numerical
-        X_encoded = X_encoded.apply(pd.to_numeric, errors='coerce')
-
         return X_encoded
 
     def _sin_transformer(self, period):
@@ -261,32 +227,35 @@ class LinearModel(Estimator):
 
     def _cos_transformer(self, period):
         return FunctionTransformer(lambda x: np.cos(x / period * 2 * np.pi))
-
-    def _encode_timestamps_cyclical_create(self, X: pd.DataFrame, timestamp_cols: list):
-        # Perform one-hot encoding¡
+    
+    def _encode_timestamps_cyclical(self, X: pd.DataFrame):
+        '''
+        Function to encode the timestamps as cyclical variables.
+        :param X: pd.DataFrame with the features.
+        :return: X_encoded: pd.DataFrame with the encoded features.
+        '''
         X_encoded = X.copy()
-        X_encoded.drop(columns=['creation_date'], inplace=True)
+        X_encoded["activation_date_year"] = X_encoded["activation_timestamp"].dt.year
+        X_encoded.loc[:, 'activation_date_year_sin'] = self._sin_transformer(1).fit_transform(X_encoded[['activation_date_year']])
+        X_encoded.loc[:, 'activation_date_year_cos'] = self._cos_transformer(1).fit_transform(X_encoded[['activation_date_year']])
+        X_encoded.drop(columns="activation_date_year", inplace=True)
 
-        X_encoded["creation_date_year"] = X_encoded["creation_timestamp"].dt.year
-        X_encoded.loc[:, 'creation_date_year_sin'] = self._sin_transformer(1).fit_transform(X_encoded[['creation_date_year']])
-        X_encoded.loc[:, 'creation_date_year_cos'] = self._cos_transformer(1).fit_transform(X_encoded[['creation_date_year']])
-        X_encoded.drop(columns="creation_date_year", inplace=True)
+        X_encoded["activation_date_month"] = X_encoded["activation_timestamp"].dt.month
+        X_encoded.loc[:, 'activation_date_month_sin'] = self._sin_transformer(12).fit_transform(X_encoded[['activation_date_month']])
+        X_encoded.loc[:, 'activation_date_month_cos'] = self._cos_transformer(12).fit_transform(X_encoded[['activation_date_month']])
+        X_encoded.drop(columns="activation_date_month", inplace=True)
 
-        X_encoded["creation_date_month"] = X_encoded["creation_timestamp"].dt.month
-        X_encoded.loc[:, 'creation_date_month_sin'] = self._sin_transformer(12).fit_transform(X_encoded[['creation_date_month']])
-        X_encoded.loc[:, 'creation_date_month_cos'] = self._cos_transformer(12).fit_transform(X_encoded[['creation_date_month']])
-        X_encoded.drop(columns="creation_date_month", inplace=True)
+        X_encoded["activation_date_day"] = X_encoded["activation_timestamp"].dt.day
+        X_encoded.loc[:, 'activation_date_day_sin'] = self._sin_transformer(31).fit_transform(X_encoded[['activation_date_day']])
+        X_encoded.loc[:, 'activation_date_day_cos'] = self._cos_transformer(31).fit_transform(X_encoded[['activation_date_day']])
+        X_encoded.drop(columns="activation_date_day", inplace=True)
 
-        X_encoded["creation_date_day"] = X_encoded["creation_timestamp"].dt.day
-        X_encoded.loc[:, 'creation_date_day_sin'] = self._sin_transformer(31).fit_transform(X_encoded[['creation_date_day']])
-        X_encoded.loc[:, 'creation_date_day_cos'] = self._cos_transformer(31).fit_transform(X_encoded[['creation_date_day']])
-        X_encoded.drop(columns="creation_date_day", inplace=True)
+        X_encoded.loc[:, 'activation_date_weekday'] = X_encoded['activation_timestamp'].dt.weekday
+        X_encoded.loc[:, 'activation_date_weekday_sin'] = self._sin_transformer(31).fit_transform(X_encoded[['activation_date_weekday']])
+        X_encoded.loc[:, 'activation_date_weekday_cos'] = self._cos_transformer(31).fit_transform(X_encoded[['activation_date_weekday']])
+        X_encoded.drop(columns="activation_date_weekday", inplace=True)
 
-        X_encoded.loc[:, 'creation_date_weekday'] = X_encoded['creation_timestamp'].dt.weekday
-        X_encoded.loc[:, 'creation_date_weekday_sin'] = self._sin_transformer(31).fit_transform(X_encoded[['creation_date_weekday']])
-        X_encoded.loc[:, 'creation_date_weekday_cos'] = self._cos_transformer(31).fit_transform(X_encoded[['creation_date_weekday']])
-        X_encoded.drop(columns="creation_date_weekday", inplace=True)
-
+        timestamp_cols = [col for col in X.columns if 'timestamp' in col]
         for col in timestamp_cols:
             X_encoded.loc[:, f'{col}_hour'] = X_encoded[col].dt.hour
             X_encoded.loc[:, f'{col}_hour_sin'] = self._sin_transformer(24).fit_transform(X_encoded[[f'{col}_hour']])
@@ -302,36 +271,6 @@ class LinearModel(Estimator):
             X_encoded.loc[:, f'{col}_second_sin'] = self._sin_transformer(60).fit_transform(X_encoded[[f'{col}_second']])
             X_encoded.loc[:, f'{col}_second_cos'] = self._cos_transformer(60).fit_transform(X_encoded[[f'{col}_second']])
             X_encoded.drop(columns=f'{col}_second', inplace=True)
-        
-        return X_encoded
-    
-    def _encode_timestamps_cyclical(self, X: pd.DataFrame):
-        '''
-        Function to encode the timestamps as cyclical variables.
-        :param X: pd.DataFrame with the features.
-        :return: X_encoded: pd.DataFrame with the encoded features.
-        '''
-        timestamp_cols = [col for col in X.columns if 'timestamp' in col]
-        X_encoded = self._encode_timestamps_cyclical_create(X, timestamp_cols)
-
-        X_encoded.drop(columns=timestamp_cols, inplace=True)
-        X_encoded = pd.get_dummies(X_encoded, drop_first=True)
-
-        # Ensure all data is numerical
-        X_encoded = X_encoded.apply(pd.to_numeric, errors='coerce')
-        return X_encoded
-    
-    def _encode_timestamps_cyclical_difference(self, X: pd.DataFrame):
-        '''
-        Function to encode the timestamps as dummy variables adding the difference between the timestamps.
-        The difference is computed as the difference between the timestamp and the creation timestamp.
-        The difference is computed in seconds.
-        :param X: pd.DataFrame with the features.
-        :return: X_encoded: pd.DataFrame with the encoded features.
-        '''
-        timestamp_cols = [col for col in X.columns if 'timestamp' in col]
-        X_encoded = self._encode_timestamps_cyclical_create(X, timestamp_cols)
-        X_encoded = self._encode_timestamps_difference(X_encoded)
 
         X_encoded.drop(columns=timestamp_cols, inplace=True)
         X_encoded = pd.get_dummies(X_encoded, drop_first=True)
@@ -349,16 +288,13 @@ class LinearModel(Estimator):
         :return self: the fitted model.
         '''
         logging.info(f"Train datasets shapes: X: {X_train.shape}, y: {y_train.shape}")
+        logging.info(f"Train datasets columns: {X_train.columns}")
         logging.info("Starting to encode variables")
         # Perform one-hot encoding
         if self.encoding == 'dummy':
             X_encoded = self._encode_timestamps_dummy_variables(X_train)
-        elif self.encoding == 'dummy+difference':
-            X_encoded = self._encode_timestamps_dummy_variables_difference(X_train)
         elif self.encoding == 'cyclical':
             X_encoded = self._encode_timestamps_cyclical(X_train)
-        elif self.encoding == 'cyclical+difference':
-            X_encoded = self._encode_timestamps_cyclical_difference(X_train)
         else:
             raise ValueError(f"Unknown encoding type: {self.encoding}")
         
@@ -379,12 +315,8 @@ class LinearModel(Estimator):
         # Perform one-hot encoding
         if self.encoding == 'dummy':
             X_encoded = self._encode_timestamps_dummy_variables(X)
-        elif self.encoding == 'dummy+difference':
-            X_encoded = self._encode_timestamps_dummy_variables_difference(X)
         elif self.encoding == 'cyclical':
             X_encoded = self._encode_timestamps_cyclical(X)
-        elif self.encoding == 'cyclical+difference':
-            X_encoded = self._encode_timestamps_cyclical_difference(X)
         else:
             raise ValueError(f"Unknown encoding type: {self.encoding}")
 
