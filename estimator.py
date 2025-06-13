@@ -7,6 +7,7 @@ from sklearn.linear_model import LinearRegression, SGDRegressor
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, MinMaxScaler, StandardScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error
+from sklearn.tree import DecisionTreeRegressor
 
 logging.getLogger().setLevel(os.environ.get("LOG_LEVEL", "INFO"))
 logging.basicConfig(level=logging.INFO) # USe INFO to see more informations, WARNING to see less
@@ -161,6 +162,91 @@ class BaselineModel_mean(Estimator):
         return mae, mse
 
 
+def _encode_timestamps_dummy_variables(X: pd.DataFrame):
+    '''
+    Function to encode the timestamps as dummy variables.
+    :param X: pd.DataFrame with the features.
+    :return: X_encoded: pd.DataFrame with the encoded features.
+    '''
+
+    # Perform one-hot encoding
+    X_encoded = X.copy()
+    X_encoded.loc[:, 'activation_date_year'] = X_encoded['activation_timestamp'].dt.year
+    X_encoded.loc[:, 'activation_date_month'] = X_encoded['activation_timestamp'].dt.month
+    X_encoded.loc[:, 'activation_date_day'] = X_encoded['activation_timestamp'].dt.day
+    X_encoded.loc[:, 'activation_date_weekday'] = X_encoded['activation_timestamp'].dt.weekday
+
+    timestamp_cols = [col for col in X.columns if 'timestamp' in col]
+    for col in timestamp_cols:
+        X_encoded.loc[:, f'{col}_hour'] = X_encoded[col].dt.hour
+        X_encoded.loc[:, f'{col}_minute'] = X_encoded[col].dt.minute
+        X_encoded.loc[:, f'{col}_second'] = X_encoded[col].dt.second
+
+    X_encoded.drop(columns=['activation_timestamp'], inplace=True)
+    X_encoded = pd.get_dummies(X_encoded, drop_first=True)
+
+    # Ensure all data is numerical
+    X_encoded = X_encoded.apply(pd.to_numeric, errors='coerce')
+    return X_encoded
+
+def _sin_transformer(period):
+    return FunctionTransformer(lambda x: np.sin(x / period * 2 * np.pi))
+
+def _cos_transformer(period):
+    return FunctionTransformer(lambda x: np.cos(x / period * 2 * np.pi))
+    
+def _encode_timestamps_cyclical(X: pd.DataFrame):
+    '''
+    Function to encode the timestamps as cyclical variables.
+    :param X: pd.DataFrame with the features.
+    :return: X_encoded: pd.DataFrame with the encoded features.
+    '''
+    X_encoded = X.copy()
+    X_encoded["activation_date_year"] = X_encoded["activation_timestamp"].dt.year
+    X_encoded.loc[:, 'activation_date_year_sin'] = _sin_transformer(1).fit_transform(X_encoded[['activation_date_year']])
+    X_encoded.loc[:, 'activation_date_year_cos'] = _cos_transformer(1).fit_transform(X_encoded[['activation_date_year']])
+    X_encoded.drop(columns="activation_date_year", inplace=True)
+
+    X_encoded["activation_date_month"] = X_encoded["activation_timestamp"].dt.month
+    X_encoded.loc[:, 'activation_date_month_sin'] = _sin_transformer(12).fit_transform(X_encoded[['activation_date_month']])
+    X_encoded.loc[:, 'activation_date_month_cos'] = _cos_transformer(12).fit_transform(X_encoded[['activation_date_month']])
+    X_encoded.drop(columns="activation_date_month", inplace=True)
+
+    X_encoded["activation_date_day"] = X_encoded["activation_timestamp"].dt.day
+    X_encoded.loc[:, 'activation_date_day_sin'] = _sin_transformer(31).fit_transform(X_encoded[['activation_date_day']])
+    X_encoded.loc[:, 'activation_date_day_cos'] = _cos_transformer(31).fit_transform(X_encoded[['activation_date_day']])
+    X_encoded.drop(columns="activation_date_day", inplace=True)
+
+    X_encoded.loc[:, 'activation_date_weekday'] = X_encoded['activation_timestamp'].dt.weekday
+    X_encoded.loc[:, 'activation_date_weekday_sin'] = _sin_transformer(31).fit_transform(X_encoded[['activation_date_weekday']])
+    X_encoded.loc[:, 'activation_date_weekday_cos'] = _cos_transformer(31).fit_transform(X_encoded[['activation_date_weekday']])
+    X_encoded.drop(columns="activation_date_weekday", inplace=True)
+
+    timestamp_cols = [col for col in X.columns if 'timestamp' in col]
+    for col in timestamp_cols:
+        X_encoded.loc[:, f'{col}_hour'] = X_encoded[col].dt.hour
+        X_encoded.loc[:, f'{col}_hour_sin'] = _sin_transformer(24).fit_transform(X_encoded[[f'{col}_hour']])
+        X_encoded.loc[:, f'{col}_hour_cos'] = _cos_transformer(24).fit_transform(X_encoded[[f'{col}_hour']])
+        X_encoded.drop(columns=f'{col}_hour', inplace=True)
+
+        X_encoded.loc[:, f'{col}_minute'] = X_encoded[col].dt.minute
+        X_encoded.loc[:, f'{col}_minute_sin'] = _sin_transformer(60).fit_transform(X_encoded[[f'{col}_minute']])
+        X_encoded.loc[:, f'{col}_minute_cos'] = _cos_transformer(60).fit_transform(X_encoded[[f'{col}_minute']])
+        X_encoded.drop(columns=f'{col}_minute', inplace=True)
+
+        X_encoded.loc[:, f'{col}_second'] = X_encoded[col].dt.second
+        X_encoded.loc[:, f'{col}_second_sin'] = _sin_transformer(60).fit_transform(X_encoded[[f'{col}_second']])
+        X_encoded.loc[:, f'{col}_second_cos'] = _cos_transformer(60).fit_transform(X_encoded[[f'{col}_second']])
+        X_encoded.drop(columns=f'{col}_second', inplace=True)
+
+    X_encoded.drop(columns=timestamp_cols, inplace=True)
+    X_encoded = pd.get_dummies(X_encoded, drop_first=True)
+
+    # Ensure all data is numerical
+    X_encoded = X_encoded.apply(pd.to_numeric, errors='coerce')
+    return X_encoded
+
+
 class LinearModel(Estimator):
     '''
     Linear model that predicts the time from pickup to delivery.
@@ -177,7 +263,7 @@ class LinearModel(Estimator):
     - cyclical: it will encode the timestamps as cyclical variables.
     - cyclical+difference: it will encode the timestamps as cyclical variables and compute the difference between the timestamps.
     '''
-    def __init__(self, model: LinearRegression = None, model_type = 'linear', encoding = 'cyclical', standardize = False):
+    def __init__(self, model: LinearRegression = None, model_type = 'linear', encoding = 'dummy', standardize = False):
         if standardize == 'minmax':
                 self.scaler = MinMaxScaler()
         elif standardize == 'stdscaler':
@@ -213,94 +299,7 @@ class LinearModel(Estimator):
             self.encoding = encoding
         else:
             raise ValueError(f"Unknown encoding type: {encoding}. Available encodings are: dummy, cyclical")
-        
-
-
-    def _encode_timestamps_dummy_variables(self, X: pd.DataFrame):
-        '''
-        Function to encode the timestamps as dummy variables.
-        :param X: pd.DataFrame with the features.
-        :return: X_encoded: pd.DataFrame with the encoded features.
-        '''
-
-        # Perform one-hot encoding
-        X_encoded = X.copy()
-        X_encoded.loc[:, 'activation_date_year'] = X_encoded['activation_timestamp'].dt.year
-        X_encoded.loc[:, 'activation_date_month'] = X_encoded['activation_timestamp'].dt.month
-        X_encoded.loc[:, 'activation_date_day'] = X_encoded['activation_timestamp'].dt.day
-        X_encoded.loc[:, 'activation_date_weekday'] = X_encoded['activation_timestamp'].dt.weekday
-
-        timestamp_cols = [col for col in X.columns if 'timestamp' in col]
-        for col in timestamp_cols:
-            X_encoded.loc[:, f'{col}_hour'] = X_encoded[col].dt.hour
-            X_encoded.loc[:, f'{col}_minute'] = X_encoded[col].dt.minute
-            X_encoded.loc[:, f'{col}_second'] = X_encoded[col].dt.second
-
-        X_encoded.drop(columns=['activation_timestamp'], inplace=True)
-        X_encoded = pd.get_dummies(X_encoded, drop_first=True)
-
-        # Ensure all data is numerical
-        X_encoded = X_encoded.apply(pd.to_numeric, errors='coerce')
-        return X_encoded
-
-    def _sin_transformer(self, period):
-        return FunctionTransformer(lambda x: np.sin(x / period * 2 * np.pi))
-
-    def _cos_transformer(self, period):
-        return FunctionTransformer(lambda x: np.cos(x / period * 2 * np.pi))
     
-    def _encode_timestamps_cyclical(self, X: pd.DataFrame):
-        '''
-        Function to encode the timestamps as cyclical variables.
-        :param X: pd.DataFrame with the features.
-        :return: X_encoded: pd.DataFrame with the encoded features.
-        '''
-        X_encoded = X.copy()
-        X_encoded["activation_date_year"] = X_encoded["activation_timestamp"].dt.year
-        X_encoded.loc[:, 'activation_date_year_sin'] = self._sin_transformer(1).fit_transform(X_encoded[['activation_date_year']])
-        X_encoded.loc[:, 'activation_date_year_cos'] = self._cos_transformer(1).fit_transform(X_encoded[['activation_date_year']])
-        X_encoded.drop(columns="activation_date_year", inplace=True)
-
-        X_encoded["activation_date_month"] = X_encoded["activation_timestamp"].dt.month
-        X_encoded.loc[:, 'activation_date_month_sin'] = self._sin_transformer(12).fit_transform(X_encoded[['activation_date_month']])
-        X_encoded.loc[:, 'activation_date_month_cos'] = self._cos_transformer(12).fit_transform(X_encoded[['activation_date_month']])
-        X_encoded.drop(columns="activation_date_month", inplace=True)
-
-        X_encoded["activation_date_day"] = X_encoded["activation_timestamp"].dt.day
-        X_encoded.loc[:, 'activation_date_day_sin'] = self._sin_transformer(31).fit_transform(X_encoded[['activation_date_day']])
-        X_encoded.loc[:, 'activation_date_day_cos'] = self._cos_transformer(31).fit_transform(X_encoded[['activation_date_day']])
-        X_encoded.drop(columns="activation_date_day", inplace=True)
-
-        X_encoded.loc[:, 'activation_date_weekday'] = X_encoded['activation_timestamp'].dt.weekday
-        X_encoded.loc[:, 'activation_date_weekday_sin'] = self._sin_transformer(31).fit_transform(X_encoded[['activation_date_weekday']])
-        X_encoded.loc[:, 'activation_date_weekday_cos'] = self._cos_transformer(31).fit_transform(X_encoded[['activation_date_weekday']])
-        X_encoded.drop(columns="activation_date_weekday", inplace=True)
-
-        timestamp_cols = [col for col in X.columns if 'timestamp' in col]
-        for col in timestamp_cols:
-            X_encoded.loc[:, f'{col}_hour'] = X_encoded[col].dt.hour
-            X_encoded.loc[:, f'{col}_hour_sin'] = self._sin_transformer(24).fit_transform(X_encoded[[f'{col}_hour']])
-            X_encoded.loc[:, f'{col}_hour_cos'] = self._cos_transformer(24).fit_transform(X_encoded[[f'{col}_hour']])
-            X_encoded.drop(columns=f'{col}_hour', inplace=True)
-
-            X_encoded.loc[:, f'{col}_minute'] = X_encoded[col].dt.minute
-            X_encoded.loc[:, f'{col}_minute_sin'] = self._sin_transformer(60).fit_transform(X_encoded[[f'{col}_minute']])
-            X_encoded.loc[:, f'{col}_minute_cos'] = self._cos_transformer(60).fit_transform(X_encoded[[f'{col}_minute']])
-            X_encoded.drop(columns=f'{col}_minute', inplace=True)
-
-            X_encoded.loc[:, f'{col}_second'] = X_encoded[col].dt.second
-            X_encoded.loc[:, f'{col}_second_sin'] = self._sin_transformer(60).fit_transform(X_encoded[[f'{col}_second']])
-            X_encoded.loc[:, f'{col}_second_cos'] = self._cos_transformer(60).fit_transform(X_encoded[[f'{col}_second']])
-            X_encoded.drop(columns=f'{col}_second', inplace=True)
-
-        X_encoded.drop(columns=timestamp_cols, inplace=True)
-        X_encoded = pd.get_dummies(X_encoded, drop_first=True)
-
-        # Ensure all data is numerical
-        X_encoded = X_encoded.apply(pd.to_numeric, errors='coerce')
-        return X_encoded
-    
-
     def fit(self, X_train: pd.DataFrame, y_train: pd.Series):
         '''
         Method to fit the model to the data. It will compute the linear regression model.
@@ -311,11 +310,11 @@ class LinearModel(Estimator):
         logging.info(f"Train datasets shapes: X: {X_train.shape}, y: {y_train.shape}")
         logging.info(f"Train datasets columns: {X_train.columns}")
         logging.info("Starting to encode variables")
-        # Perform one-hot encoding
+        # Perform the selected encoding
         if self.encoding == 'dummy':
-            X_encoded = self._encode_timestamps_dummy_variables(X_train)
+            X_encoded = _encode_timestamps_dummy_variables(X_train)
         elif self.encoding == 'cyclical':
-            X_encoded = self._encode_timestamps_cyclical(X_train)
+            X_encoded = _encode_timestamps_cyclical(X_train)
         else:
             raise ValueError(f"Unknown encoding type: {self.encoding}")
         
@@ -333,11 +332,11 @@ class LinearModel(Estimator):
         :param X: pd.DataFrame with the features.
         :return: y_hat: pd.Series with the predicted values.
         '''
-        # Perform one-hot encoding
+        # Perform the selected encoding
         if self.encoding == 'dummy':
-            X_encoded = self._encode_timestamps_dummy_variables(X)
+            X_encoded = _encode_timestamps_dummy_variables(X)
         elif self.encoding == 'cyclical':
-            X_encoded = self._encode_timestamps_cyclical(X)
+            X_encoded = _encode_timestamps_cyclical(X)
         else:
             raise ValueError(f"Unknown encoding type: {self.encoding}")
 
@@ -354,6 +353,82 @@ class LinearModel(Estimator):
         :return: mae: float with the mean absolute error.
         :return: mse: float with the mean squared error.
         '''
+        y_hat = self.predict(X_test)
+        mae = np.mean(np.abs(y_test - y_hat))
+        mse = np.mean((y_test - y_hat)**2)
+
+        return mae, mse
+    
+
+class RegressionDecisionTree(Estimator):
+    '''
+    Decision Tree Regression model that predicts the time from pickup to delivery.
+    It computes a decision tree regression model using the features as input.
+    '''
+    def __init__(self, model: DecisionTreeRegressor = None, encoding = 'dummy'):
+        if model is not None:
+            assert isinstance(model, DecisionTreeRegressor), f"The model provided must be a DecisionTreeRegressor instance"
+            self.model = model
+        else:
+            self.model = DecisionTreeRegressor(criterion='squared_error', splitter='best', max_depth=None, min_samples_split=2, min_samples_leaf=1)
+        
+        if encoding in ['dummy', 'cyclical']:
+            self.encoding = encoding
+        else:
+            raise ValueError(f"Unknown encoding type: {encoding}. Available encodings are: dummy, cyclical")
+
+    def fit(self, X_train: pd.DataFrame, y_train: pd.Series):
+        '''
+        Method to fit the model to the data. It will compute the decision tree regression model.
+        :param X_train: pd.DataFrame with the features.
+        :param y_train: pd.Series with the target variable.
+        :return self: the fitted model.
+        '''
+        logging.info(f"Train datasets shapes: X: {X_train.shape}, y: {y_train.shape}")
+        logging.info(f"Train datasets columns: {X_train.columns}")
+        logging.info("Starting to encode variables")
+        # Perform the selected encoding
+        if self.encoding == 'dummy':
+            X_encoded = _encode_timestamps_dummy_variables(X_train)
+        elif self.encoding == 'cyclical':
+            X_encoded = _encode_timestamps_cyclical(X_train)
+        else:
+            raise ValueError(f"Unknown encoding type: {self.encoding}")
+        
+        logging.info(f"Encoded dataset shape: X: {X_encoded.shape}")
+        logging.info("Finished to encode variables. Starting to fit the model")
+        self.model.fit(X_encoded, y_train)
+        logging.info("Finished training the model")
+        return self
+
+    def predict(self, X: pd.DataFrame):
+        '''
+        Method to predict the target variable. The function will give you the actual predictions for all samples inputted.
+        :param X: pd.DataFrame with the features.
+        :return: y_hat: pd.Series with the predicted values.
+        '''
+        # Perform the selected encoding
+        if self.encoding == 'dummy':
+            X_encoded = _encode_timestamps_dummy_variables(X)
+        elif self.encoding == 'cyclical':
+            X_encoded = _encode_timestamps_cyclical(X)
+        else:
+            raise ValueError(f"Unknown encoding type: {self.encoding}")
+
+        # Align columns with the training data
+        X_encoded = X_encoded.reindex(columns=self.model.feature_names_in_, fill_value=0)
+
+        return self.model.predict(X_encoded)
+
+    def evaluate(self, X_test: pd.DataFrame, y_test: pd.Series):
+        '''
+        Method to evaluate the model. It will compute the mean absolute error (MAE) and the mean squared error (MSE).
+        :param X_test: pd.DataFrame with the features.
+        :param y_test: pd.Series with the target variable.
+        :return: mae: float with the mean absolute error.
+        :return: mse: float with the mean squared error.
+        '''
+        
         y_hat = self.predict(X_test)
         mae = np.mean(np.abs(y_test - y_hat))
         mse = np.mean((y_test - y_hat)**2)
