@@ -5,7 +5,7 @@ import numpy as np
 from abc import ABC, abstractmethod
 from sklearn.linear_model import LinearRegression, SGDRegressor
 from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, StandardScaler
+from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, MinMaxScaler, StandardScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
 logging.getLogger().setLevel(os.environ.get("LOG_LEVEL", "INFO"))
@@ -54,13 +54,13 @@ class BaselineModel_sum(Estimator):
     This is not the best way to compute the velocity, as we are loosing variability info about velocity for each order.
     '''
     def __init__(self, model: pd.Series = None):
-        self.theta = None
+        self.model = None
         if model is not None:
-            self.theta = model
+            self.model = model
 
     def fit(self, X_train: pd.DataFrame, y_train: pd.Series):
         '''
-        Method to fit the model to the data. For the BaselineModel, it will compute the parameters theta, a pd.Series with the average time spent in the vehicle for each transport type.
+        Method to fit the model to the data. For the BaselineModel, it will compute the parameters model, a pd.Series with the average time spent in the vehicle for each transport type.
         :param X_train: pd.DataFrame with the features.
         :return self: the fitted model.
         '''
@@ -71,7 +71,7 @@ class BaselineModel_sum(Estimator):
             velocity[name] = sum(X_group['pd_distance_haversine_m']) / sum(y_group)
 
         velocity = pd.Series(velocity, name='velocity (m/s)')
-        self.theta = velocity
+        self.model = velocity
         return self
 
     def predict(self, X: pd.DataFrame):
@@ -82,10 +82,10 @@ class BaselineModel_sum(Estimator):
         '''
         y_hat = []
         if isinstance(X, pd.Series):
-            y_hat.append(X['pd_distance_haversine_m'] / self.theta[X['transport']])
+            y_hat.append(X['pd_distance_haversine_m'] / self.model[X['transport']])
         if isinstance(X, pd.DataFrame):
             for index, row in X.iterrows():
-                y_hat.append(row['pd_distance_haversine_m'] / self.theta[row['transport']])
+                y_hat.append(row['pd_distance_haversine_m'] / self.model[row['transport']])
         y_hat = pd.Series(y_hat, dtype=np.float64, name='pickup_to_delivery_predicted')
         return y_hat
 
@@ -112,13 +112,13 @@ class BaselineModel_mean(Estimator):
     It computes the velocity for each transport type and for each order, and then computes the mean of the velocity for each transport type.
     '''
     def __init__(self, model: pd.Series = None):
-        self.theta = None
+        self.model = None
         if model is not None:
-            self.theta = model
+            self.model = model
 
     def fit(self, X_train: pd.DataFrame, y_train: pd.Series):
         '''
-        Method to fit the model to the data. For the BaselineModel, it will compute the parameters theta, a pd.Series with the average time spent in the vehicle for each transport type.
+        Method to fit the model to the data. For the BaselineModel, it will compute the parameters model, a pd.Series with the average time spent in the vehicle for each transport type.
         :param X_train: pd.DataFrame with the features.
         :param y_train: pd.Series with the target variable.
         :return self: the fitted model.
@@ -129,7 +129,7 @@ class BaselineModel_mean(Estimator):
         X_new = X_train[X_train['velocity'] != np.inf].copy()
         # Differentiate the velocity per vehicle type
         velocity = X_new.groupby(X_new['transport'])['velocity'].mean()
-        self.theta = velocity
+        self.model = velocity
         return self
 
     def predict(self, X: pd.DataFrame):
@@ -140,10 +140,10 @@ class BaselineModel_mean(Estimator):
         '''
         y_hat = []
         if isinstance(X, pd.Series):
-            y_hat.append(X['pd_distance_haversine_m'] / self.theta[X['transport']])
+            y_hat.append(X['pd_distance_haversine_m'] / self.model[X['transport']])
         if isinstance(X, pd.DataFrame):
             for index, row in X.iterrows():
-                y_hat.append(row['pd_distance_haversine_m'] / self.theta[row['transport']])
+                y_hat.append(row['pd_distance_haversine_m'] / self.model[row['transport']])
         y_hat = pd.Series(y_hat, dtype=np.float64, name='pickup_to_delivery_predicted')
         return y_hat
 
@@ -177,23 +177,44 @@ class LinearModel(Estimator):
     - cyclical: it will encode the timestamps as cyclical variables.
     - cyclical+difference: it will encode the timestamps as cyclical variables and compute the difference between the timestamps.
     '''
-    def __init__(self, model: LinearRegression = None, model_type = 'linear', encoding = 'cyclical'):
-        if model_type == 'linear':
-            self.model = LinearRegression()
-        elif model_type == 'SGD' or model_type == 'sgd':
-            self.model = make_pipeline(StandardScaler(),
-                        SGDRegressor(max_iter=1000, tol=1e-3))
+    def __init__(self, model: LinearRegression = None, model_type = 'linear', encoding = 'cyclical', standardize = False):
+        if standardize == 'minmax':
+                self.scaler = MinMaxScaler()
+        elif standardize == 'stdscaler':
+                self.scaler = StandardScaler()
+        elif standardize is False:
+            self.scaler = None
         else:
-            raise ValueError(f"Unknown model type: {model_type}")
+            raise ValueError(f"Unknown standardize type: {standardize}. Available standardize are: minmax, stdscaler")
+
+        if model_type == 'linear':
+            if standardize is False:
+                self.model = LinearRegression()
+            else:
+                self.model = make_pipeline(self.scaler, 
+                                           LinearRegression())
+        elif model_type == 'SGD' or model_type == 'sgd':
+            if standardize is False:
+                self.model = SGDRegressor(max_iter=1000, tol=1e-3)
+            else:
+                self.model = make_pipeline(self.scaler,
+                                        SGDRegressor(max_iter=1000, tol=1e-3))
+        else:
+            raise ValueError(f"Unknown model type: {model_type}. Available models are: linear, SGD")
         
         if model is not None:
-            self.theta = model
             if self.model_type == 'linear':
-                assert isinstance(self.model, LinearRegression), f"The model provided must be a LinearRegression instance in according to {model_type}"
-            if self.model_type == 'SGD':
-                assert isinstance(self.model, SGDRegressor), f"The model provided must be a SGDRegressor instance in according to {model_type}"
+                assert isinstance(self.model, LinearRegression), f"The model provided must be a LinearRegression instance in accordance to {model_type}"
+            if self.model_type == 'SGD' or model_type == 'sgd':
+                assert isinstance(self.model, SGDRegressor), f"The model provided must be a SGDRegressor instance in accordance to {model_type}"
+            self.model = model
         
-        self.encoding = encoding
+        if encoding in ['dummy', 'cyclical']:
+            self.encoding = encoding
+        else:
+            raise ValueError(f"Unknown encoding type: {encoding}. Available encodings are: dummy, cyclical")
+        
+
 
     def _encode_timestamps_dummy_variables(self, X: pd.DataFrame):
         '''
