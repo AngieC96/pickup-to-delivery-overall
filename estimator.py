@@ -8,6 +8,10 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, MinMaxScaler, StandardScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 from sklearn.tree import DecisionTreeRegressor
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, HistGradientBoostingRegressor
+#from xgboost import XGBRegressor
+#from lightgbm import LGBMRegressor
+#from catboost import CatBoostRegressor
 
 logging.getLogger().setLevel(os.environ.get("LOG_LEVEL", "INFO"))
 logging.basicConfig(level=logging.INFO) # USe INFO to see more informations, WARNING to see less
@@ -360,17 +364,31 @@ class LinearModel(Estimator):
         return mae, mse
     
 
-class RegressionDecisionTree(Estimator):
+class RegressionTreeMethod(Estimator):
     '''
     Decision Tree Regression model that predicts the time from pickup to delivery.
     It computes a decision tree regression model using the features as input.
     '''
-    def __init__(self, model: DecisionTreeRegressor = None, encoding = 'dummy'):
-        if model is not None:
-            assert isinstance(model, DecisionTreeRegressor), f"The model provided must be a DecisionTreeRegressor instance"
-            self.model = model
-        else:
+    def __init__(self, model = None, model_type = 'tree', encoding = 'dummy', n_estimators = 100, max_iter = 100):
+        if model_type == 'tree':
             self.model = DecisionTreeRegressor(criterion='squared_error', splitter='best', max_depth=None, min_samples_split=2, min_samples_leaf=1)
+        elif model_type == 'randomforest':
+            self.model = RandomForestRegressor(n_estimators=n_estimators, criterion='squared_error', max_depth=None, min_samples_split=2, min_samples_leaf=5) #, random_state=0)
+        elif model_type == 'gradientboosting':
+            self.model = GradientBoostingRegressor(loss='squared_error', learning_rate=0.1, n_estimators=n_estimators, min_samples_split=2, min_samples_leaf=1)
+        elif model_type == 'histgradientboosting':
+            self.model = HistGradientBoostingRegressor(loss='squared_error', learning_rate=0.1, max_iter=max_iter, max_leaf_nodes=15, max_depth=None, min_samples_leaf=20, early_stopping=False) #, random_state=0
+        else:
+            raise ValueError(f"Unknown model type: {model_type}. Available models are: tree, randomforest, gradientboosting and histgradientboosting")
+        
+        if model is not None:
+            if model_type == 'tree':
+                assert isinstance(model, DecisionTreeRegressor), f"The model provided must be a DecisionTreeRegressor instance in accordance to {model_type}"
+            elif model_type == 'randomforest':
+                assert isinstance(model, RandomForestRegressor), f"The model provided must be a RandomForestRegressor instance in accordance to {model_type}"
+            elif model_type == 'gradientboosting':
+                assert isinstance(model, GradientBoostingRegressor), f"The model provided must be a GradientBoostingRegressor instance in accordance to {model_type}"
+            self.model = model
         
         if encoding in ['dummy', 'cyclical']:
             self.encoding = encoding
