@@ -40,22 +40,22 @@ class Estimator(ABC):
         '''
         pass
 
-    def test(self, X_test: pd.DataFrame, y_test: pd.Series):
+    def test(self, X: pd.DataFrame, y_test: pd.Series):
         '''
         Method to test the model on the test set.
-        :param X_test: pd.DataFrame with the features.
+        :param X: pd.DataFrame with the features.
         :param y_test: pd.Series with the target variable.
         :return: results: pd.DataFrame with the predictions and the actual values.
         '''
         pass
 
     @abstractmethod
-    def evaluate(self, X_test: pd.DataFrame, y_test: pd.Series):
+    def evaluate(self, X: pd.DataFrame, y_test: pd.Series):
         '''
         Method to evaluate the model.
         It will compute the loss, a numerical metric that describes how wrong a model's predictions are.
         Loss measures the distance between the model's predictions and the actual labels.
-        :param X_test: pd.DataFrame with the features.
+        :param X: pd.DataFrame with the features.
         :param y_test: pd.Series with the target variable.
         :return: loss: float with the loss of the model.
         '''
@@ -104,24 +104,30 @@ class BaselineModel_sum(Estimator):
         y_hat = pd.Series(y_hat, dtype=np.float64, name='pickup_to_delivery_predicted')
         return y_hat
     
-    def test(self, X_test: pd.DataFrame, y_test: pd.Series):
+    def test(self, X: pd.DataFrame, y_test: pd.Series):
+        '''
+        Method to test the model. It will compute the predictions and create a results dataset.
+        :param X: pd.DataFrame with the features.
+        :param y_test: pd.Series with the target variable.
+        :return: results_dataset: pd.DataFrame with the results.
+        '''
         results_dataset = pd.concat([
-            X_test,
+            X.copy(),
             y_test.rename("target"),
-            pd.Series(self.predict(X_test), name="prediction"),
+            pd.Series(self.predict(X), name="prediction"),
         ], axis=1)
         results_dataset['residual'] = results_dataset['prediction'] - results_dataset['target']
         return results_dataset
 
-    def evaluate(self, X_test: pd.DataFrame, y_test: pd.Series):
+    def evaluate(self, X: pd.DataFrame, y_test: pd.Series):
         '''
         Method to evaluate the model. It will compute the mean absolute error (MAE) and the mean squared error (MSE).
-        :param X_test: pd.DataFrame with the features.
+        :param X: pd.DataFrame with the features.
         :param y_test: pd.Series with the target variable.
         :return: mae: float with the mean absolute error.
         :return: mse: float with the mean squared error.
         '''
-        y_hat = self.predict(X_test)
+        y_hat = self.predict(X)
         mae = np.mean(np.abs(y_test - y_hat))
         mse = np.mean((y_test - y_hat)**2)
         r2 = r2_score(y_test, y_hat)
@@ -147,11 +153,12 @@ class BaselineModel_mean(Estimator):
         :return self: the fitted model.
         '''
         logging.info(f"Train datasets shapes: X: {X_train.shape}, y: {y_train.shape}")
-        X_train['velocity'] = X_train['pd_distance_haversine_m'] / y_train
+        X_train_model = X_train.copy()
+        X_train_model['velocity'] = X_train_model['pd_distance_haversine_m'] / y_train
         # For few rows we have that delivery_timestamp = pickup_timestamp, so the velocity is infinite. We will drop the rows where the velocity is infinite
-        X_new = X_train[X_train['velocity'] != np.inf].copy()
+        X_train_model.drop(X_train_model[X_train_model['velocity'] == np.inf].index, inplace=True)
         # Differentiate the velocity per vehicle type
-        velocity = X_new.groupby(X_new['transport'])['velocity'].mean()
+        velocity = X_train_model.groupby(X_train_model['transport'])['velocity'].mean()
         self.model = velocity
         return self
 
@@ -170,24 +177,29 @@ class BaselineModel_mean(Estimator):
         y_hat = pd.Series(y_hat, dtype=np.float64, name='pickup_to_delivery_predicted')
         return y_hat
     
-    def test(self, X_test: pd.DataFrame, y_test: pd.Series):
+    def test(self, X: pd.DataFrame, y_test: pd.Series):
+        '''Method to test the model. It will compute the predictions and create a results dataset.
+        :param X: pd.DataFrame with the features.
+        :param y_test: pd.Series with the target variable.
+        :return: results_dataset: pd.DataFrame with the results.
+        '''
         results_dataset = pd.concat([
-            X_test,
+            X.copy(),
             y_test.rename("target"),
-            pd.Series(self.predict(X_test), name="prediction"),
+            pd.Series(self.predict(X), name="prediction"),
         ], axis=1)
         results_dataset['residual'] = results_dataset['prediction'] - results_dataset['target']
         return results_dataset
 
-    def evaluate(self, X_test: pd.DataFrame, y_test: pd.Series):
+    def evaluate(self, X: pd.DataFrame, y_test: pd.Series):
         '''
         Method to evaluate the model. It will compute the mean absolute error (MAE) and the mean squared error (MSE).
-        :param X_test: pd.DataFrame with the features.
+        :param X: pd.DataFrame with the features.
         :param y_test: pd.Series with the target variable.
         :return: mae: float with the mean absolute error.
         :return: mse: float with the mean squared error.
         '''
-        y_hat = self.predict(X_test)
+        y_hat = self.predict(X)
         mae = np.mean(np.abs(y_test - y_hat))
         mse = np.mean((y_test - y_hat)**2)
         r2 = r2_score(y_test, y_hat)
@@ -377,24 +389,29 @@ class LinearModel(Estimator):
 
         return self.model.predict(X_encoded)
     
-    def test(self, X_test: pd.DataFrame, y_test: pd.Series):
+    def test(self, X: pd.DataFrame, y_test: pd.Series):
+        '''Method to test the model. It will compute the predictions and create a results dataset.
+        :param X: pd.DataFrame with the features.
+        :param y_test: pd.Series with the target variable.
+        :return: results_dataset: pd.DataFrame with the results.
+        '''
         results_dataset = pd.concat([
-            X_test,
+            X.copy(),
             y_test.rename("target"),
-            pd.Series(self.predict(X_test), name="prediction"),
+            pd.Series(self.predict(X), name="prediction"),
         ], axis=1)
         results_dataset['residual'] = results_dataset['prediction'] - results_dataset['target']
         return results_dataset
 
-    def evaluate(self, X_test: pd.DataFrame, y_test: pd.Series):
+    def evaluate(self, X: pd.DataFrame, y_test: pd.Series):
         '''
         Method to evaluate the model. It will compute the mean absolute error (MAE) and the mean squared error (MSE).
-        :param X_test: pd.DataFrame with the features.
+        :param X: pd.DataFrame with the features.
         :param y_test: pd.Series with the target variable.
         :return: mae: float with the mean absolute error.
         :return: mse: float with the mean squared error.
         '''
-        y_hat = self.predict(X_test)
+        y_hat = self.predict(X)
         mae = np.mean(np.abs(y_test - y_hat))
         mse = np.mean((y_test - y_hat)**2)
         r2 = r2_score(y_test, y_hat)
@@ -421,7 +438,7 @@ class RegressionTreeMethod(Estimator):
         elif model_type == 'lightgbm':
             self.model = LGBMRegressor(objective='regression', n_estimators=n_estimators)
         elif model_type == 'catboost':
-            self.model = CatBoostRegressor(loss_function='RMSE', iterations=max_iter, verbose=False)
+            self.model = CatBoostRegressor(loss_function='RMSE', iterations=max_iter, silent=True, allow_writing_files=False)
         else:
             raise ValueError(f"Unknown model type: {model_type}. Available models are: tree, randomforest, gradientboosting, histgradientboosting, xgboost, lightgbm and catboost")
 
@@ -493,25 +510,30 @@ class RegressionTreeMethod(Estimator):
 
         return self.model.predict(X_encoded)
     
-    def test(self, X_test: pd.DataFrame, y_test: pd.Series):
+    def test(self, X: pd.DataFrame, y_test: pd.Series):
+        '''Method to test the model. It will compute the predictions and create a results dataset.
+        :param X: pd.DataFrame with the features.
+        :param y_test: pd.Series with the target variable.
+        :return: results_dataset: pd.DataFrame with the results.
+        '''
         results_dataset = pd.concat([
-            X_test,
+            X.copy(),
             y_test.rename("target"),
-            pd.Series(self.predict(X_test), name="prediction"),
+            pd.Series(self.predict(X), name="prediction"),
         ], axis=1)
         results_dataset['residual'] = results_dataset['prediction'] - results_dataset['target']
         return results_dataset
 
-    def evaluate(self, X_test: pd.DataFrame, y_test: pd.Series):
+    def evaluate(self, X: pd.DataFrame, y_test: pd.Series):
         '''
         Method to evaluate the model. It will compute the mean absolute error (MAE) and the mean squared error (MSE).
-        :param X_test: pd.DataFrame with the features.
+        :param X: pd.DataFrame with the features.
         :param y_test: pd.Series with the target variable.
         :return: mae: float with the mean absolute error.
         :return: mse: float with the mean squared error.
         '''
         
-        y_hat = self.predict(X_test)
+        y_hat = self.predict(X)
         mae = np.mean(np.abs(y_test - y_hat))
         mse = np.mean((y_test - y_hat)**2)
         r2 = r2_score(y_test, y_hat)
