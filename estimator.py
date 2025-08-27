@@ -2,16 +2,17 @@ import os
 import logging
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 from abc import ABC, abstractmethod
 from sklearn.linear_model import LinearRegression, SGDRegressor
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, MinMaxScaler, StandardScaler
-from sklearn.metrics import mean_squared_error, mean_absolute_error
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, HistGradientBoostingRegressor
-#from xgboost import XGBRegressor
-#from lightgbm import LGBMRegressor
-#from catboost import CatBoostRegressor
+from xgboost import XGBRegressor
+from lightgbm import LGBMRegressor
+from catboost import CatBoostRegressor
 
 logging.getLogger().setLevel(os.environ.get("LOG_LEVEL", "INFO"))
 logging.basicConfig(level=logging.INFO) # USe INFO to see more informations, WARNING to see less
@@ -36,6 +37,15 @@ class Estimator(ABC):
         '''
         Method to predict the target variable. The function will give you the actual predictions for all samples inputted.
         :return: y_hat: pd.Series with the predicted values.
+        '''
+        pass
+
+    def test(self, X_test: pd.DataFrame, y_test: pd.Series):
+        '''
+        Method to test the model on the test set.
+        :param X_test: pd.DataFrame with the features.
+        :param y_test: pd.Series with the target variable.
+        :return: results: pd.DataFrame with the predictions and the actual values.
         '''
         pass
 
@@ -93,6 +103,15 @@ class BaselineModel_sum(Estimator):
                 y_hat.append(row['pd_distance_haversine_m'] / self.model[row['transport']])
         y_hat = pd.Series(y_hat, dtype=np.float64, name='pickup_to_delivery_predicted')
         return y_hat
+    
+    def test(self, X_test: pd.DataFrame, y_test: pd.Series):
+        results_dataset = pd.concat([
+            X_test,
+            y_test.rename("target"),
+            pd.Series(self.predict(X_test), name="prediction"),
+        ], axis=1)
+        results_dataset['residual'] = results_dataset['prediction'] - results_dataset['target']
+        return results_dataset
 
     def evaluate(self, X_test: pd.DataFrame, y_test: pd.Series):
         '''
@@ -103,11 +122,10 @@ class BaselineModel_sum(Estimator):
         :return: mse: float with the mean squared error.
         '''
         y_hat = self.predict(X_test)
-        print("y_hat", type(y_hat), y_hat.dtype)
-        print("y_test", type(y_test), y_test.dtype)
         mae = np.mean(np.abs(y_test - y_hat))
         mse = np.mean((y_test - y_hat)**2)
-        return mae, mse
+        r2 = r2_score(y_test, y_hat)
+        return mae, mse, r2
 
 
 
@@ -151,6 +169,15 @@ class BaselineModel_mean(Estimator):
                 y_hat.append(row['pd_distance_haversine_m'] / self.model[row['transport']])
         y_hat = pd.Series(y_hat, dtype=np.float64, name='pickup_to_delivery_predicted')
         return y_hat
+    
+    def test(self, X_test: pd.DataFrame, y_test: pd.Series):
+        results_dataset = pd.concat([
+            X_test,
+            y_test.rename("target"),
+            pd.Series(self.predict(X_test), name="prediction"),
+        ], axis=1)
+        results_dataset['residual'] = results_dataset['prediction'] - results_dataset['target']
+        return results_dataset
 
     def evaluate(self, X_test: pd.DataFrame, y_test: pd.Series):
         '''
@@ -163,7 +190,8 @@ class BaselineModel_mean(Estimator):
         y_hat = self.predict(X_test)
         mae = np.mean(np.abs(y_test - y_hat))
         mse = np.mean((y_test - y_hat)**2)
-        return mae, mse
+        r2 = r2_score(y_test, y_hat)
+        return mae, mse, r2
 
 
 def _encode_timestamps_dummy_variables(X: pd.DataFrame):
@@ -348,6 +376,15 @@ class LinearModel(Estimator):
         X_encoded = X_encoded.reindex(columns=self.model.feature_names_in_, fill_value=0)
 
         return self.model.predict(X_encoded)
+    
+    def test(self, X_test: pd.DataFrame, y_test: pd.Series):
+        results_dataset = pd.concat([
+            X_test,
+            y_test.rename("target"),
+            pd.Series(self.predict(X_test), name="prediction"),
+        ], axis=1)
+        results_dataset['residual'] = results_dataset['prediction'] - results_dataset['target']
+        return results_dataset
 
     def evaluate(self, X_test: pd.DataFrame, y_test: pd.Series):
         '''
@@ -360,9 +397,9 @@ class LinearModel(Estimator):
         y_hat = self.predict(X_test)
         mae = np.mean(np.abs(y_test - y_hat))
         mse = np.mean((y_test - y_hat)**2)
+        r2 = r2_score(y_test, y_hat)
+        return mae, mse, r2
 
-        return mae, mse
-    
 
 class RegressionTreeMethod(Estimator):
     '''
@@ -373,14 +410,20 @@ class RegressionTreeMethod(Estimator):
         if model_type == 'tree':
             self.model = DecisionTreeRegressor(criterion='squared_error', splitter='best', max_depth=None, min_samples_split=2, min_samples_leaf=1)
         elif model_type == 'randomforest':
-            self.model = RandomForestRegressor(n_estimators=n_estimators, criterion='squared_error', max_depth=None, min_samples_split=2, min_samples_leaf=5) #, random_state=0)
+            self.model = RandomForestRegressor(n_estimators=n_estimators, criterion='squared_error', max_depth=None, min_samples_split=2, min_samples_leaf=5)
         elif model_type == 'gradientboosting':
             self.model = GradientBoostingRegressor(loss='squared_error', learning_rate=0.1, n_estimators=n_estimators, min_samples_split=2, min_samples_leaf=1)
         elif model_type == 'histgradientboosting':
-            self.model = HistGradientBoostingRegressor(loss='squared_error', learning_rate=0.1, max_iter=max_iter, max_leaf_nodes=15, max_depth=None, min_samples_leaf=20, early_stopping=False) #, random_state=0
+            self.model = HistGradientBoostingRegressor(loss='squared_error', learning_rate=0.1, max_iter=max_iter, max_leaf_nodes=15, max_depth=None, min_samples_leaf=20, early_stopping=False)
+        elif model_type == 'xgboost':
+            self.model = XGBRegressor(objective='reg:squarederror', n_estimators=n_estimators) #TODO: CHECK!!!!
+        elif model_type == 'lightgbm':
+            self.model = LGBMRegressor(objective='regression', n_estimators=n_estimators) #TODO: CHECK!!!!
+        elif model_type == 'catboost':
+            self.model = CatBoostRegressor(loss_function='RMSE', iterations=n_estimators, verbose=0) #TODO: CHECK!!!!
         else:
-            raise ValueError(f"Unknown model type: {model_type}. Available models are: tree, randomforest, gradientboosting and histgradientboosting")
-        
+            raise ValueError(f"Unknown model type: {model_type}. Available models are: tree, randomforest, gradientboosting, histgradientboosting, xgboost, lightgbm and catboost")
+
         if model is not None:
             if model_type == 'tree':
                 assert isinstance(model, DecisionTreeRegressor), f"The model provided must be a DecisionTreeRegressor instance in accordance to {model_type}"
@@ -437,6 +480,15 @@ class RegressionTreeMethod(Estimator):
         X_encoded = X_encoded.reindex(columns=self.model.feature_names_in_, fill_value=0)
 
         return self.model.predict(X_encoded)
+    
+    def test(self, X_test: pd.DataFrame, y_test: pd.Series):
+        results_dataset = pd.concat([
+            X_test,
+            y_test.rename("target"),
+            pd.Series(self.predict(X_test), name="prediction"),
+        ], axis=1)
+        results_dataset['residual'] = results_dataset['prediction'] - results_dataset['target']
+        return results_dataset
 
     def evaluate(self, X_test: pd.DataFrame, y_test: pd.Series):
         '''
@@ -450,5 +502,19 @@ class RegressionTreeMethod(Estimator):
         y_hat = self.predict(X_test)
         mae = np.mean(np.abs(y_test - y_hat))
         mse = np.mean((y_test - y_hat)**2)
+        r2 = r2_score(y_test, y_hat)
+        return mae, mse, r2
 
-        return mae, mse
+    def plot_feature_importance(self, X_test: pd.DataFrame, n_features=9999):
+        feature_importance = self.model.feature_importances_
+        importance_df = pd.DataFrame(
+            {"Feature": X_test.columns, "Importance": feature_importance}
+        ).sort_values(by="Importance", ascending=False)
+        importance_df = importance_df.sort_values(by="Importance", ascending=False)[:n_features]
+
+        plt.figure(figsize=(10, 5))
+        plt.barh(importance_df["Feature"], importance_df["Importance"])
+        plt.xlabel("Importance")
+        plt.ylabel("Feature")
+        plt.title("Model Feature Importance")
+        plt.show()
