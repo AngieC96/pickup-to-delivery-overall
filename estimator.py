@@ -134,7 +134,6 @@ class BaselineModel_sum(Estimator):
         return mae, mse, r2
 
 
-
 class BaselineModel_mean(Estimator):
     '''
     Baseline model that predicts the time from pickup to delivery.
@@ -363,6 +362,7 @@ class LinearModel(Estimator):
             raise ValueError(f"Unknown encoding type: {self.encoding}")
         
         logging.info(f"Encoded dataset shape: X: {X_encoded.shape}")
+        logging.info(f"Encoded datasets columns: {X_encoded.columns}")
         logging.info("Finished to encode variables. Starting to fit the model")
 
         # Fit the model
@@ -423,22 +423,22 @@ class RegressionTreeMethod(Estimator):
     Decision Tree Regression model that predicts the time from pickup to delivery.
     It computes a decision tree regression model using the features as input.
     '''
-    def __init__(self, model = None, model_type = 'tree', encoding = 'dummy', n_estimators = 100, max_iter = 100, **kwargs):
+    def __init__(self, model = None, model_type = 'tree', encoding = 'dummy', **kwargs):
         self.model_type = model_type
         if model_type == 'tree':
-            self.model = DecisionTreeRegressor(criterion='squared_error', splitter='best', max_depth=None, min_samples_split=2, min_samples_leaf=1)
+            self.model = DecisionTreeRegressor(criterion='squared_error', splitter='best', **kwargs)
         elif model_type == 'randomforest':
-            self.model = RandomForestRegressor(n_estimators=n_estimators, criterion='squared_error', max_depth=None, min_samples_split=2, min_samples_leaf=5)
+            self.model = RandomForestRegressor(criterion='squared_error', **kwargs)
         elif model_type == 'gradientboosting':
-            self.model = GradientBoostingRegressor(loss='squared_error', learning_rate=0.1, n_estimators=n_estimators, min_samples_split=2, min_samples_leaf=1)
+            self.model = GradientBoostingRegressor(loss='squared_error', **kwargs)
         elif model_type == 'histgradientboosting':
-            self.model = HistGradientBoostingRegressor(loss='squared_error', learning_rate=0.1, max_iter=max_iter, max_leaf_nodes=15, max_depth=None, min_samples_leaf=20, early_stopping=False)
+            self.model = HistGradientBoostingRegressor(loss='squared_error', **kwargs)
         elif model_type == 'xgboost':
-            self.model = XGBRegressor(objective='reg:squarederror', n_estimators=n_estimators)
+            self.model = XGBRegressor(objective='reg:squarederror', **kwargs)
         elif model_type == 'lightgbm':
-            self.model = LGBMRegressor(objective='regression', n_estimators=n_estimators)
+            self.model = LGBMRegressor(objective='regression', **kwargs)
         elif model_type == 'catboost':
-            self.model = CatBoostRegressor(loss_function='RMSE', iterations=max_iter, silent=True, allow_writing_files=False)
+            self.model = CatBoostRegressor(loss_function='RMSE', silent=True, allow_writing_files=False, **kwargs)
         else:
             raise ValueError(f"Unknown model type: {model_type}. Available models are: tree, randomforest, gradientboosting, histgradientboosting, xgboost, lightgbm and catboost")
 
@@ -483,6 +483,7 @@ class RegressionTreeMethod(Estimator):
             raise ValueError(f"Unknown encoding type: {self.encoding}")
         
         logging.info(f"Encoded dataset shape: X: {X_encoded.shape}")
+        logging.info(f"Encoded datasets columns: {X_encoded.columns}")
         logging.info("Finished to encode variables. Starting to fit the model")
         self.model.fit(X_encoded, y_train)
         logging.info("Finished training the model")
@@ -540,13 +541,20 @@ class RegressionTreeMethod(Estimator):
         return mae, mse, r2
 
     def plot_feature_importance(self, X: pd.DataFrame, n_features=9999):
+        if not self.model:
+            raise TypeError("Model is not trained yet.")
+        if self.model_type not in ['tree', 'randomforest', 'gradientboosting', 'xgboost', 'lightgbm', 'catboost']:
+            raise AttributeError(f"The model type: {self.model_type} does not support feature importance plotting.")
         if self.encoding == 'dummy':
             X_encoded = _encode_timestamps_dummy_variables(X)
         elif self.encoding == 'cyclical':
             X_encoded = _encode_timestamps_cyclical(X)
         else:
             raise ValueError(f"Unknown encoding type: {self.encoding}")
-        feature_importance = self.model.feature_importances_
+        if self.model_type == 'catboost':
+            feature_importance = self.model.get_feature_importance()
+        else:
+            feature_importance = self.model.feature_importances_
         print(X_encoded.columns)
         print(feature_importance)
         importance_df = pd.DataFrame(
